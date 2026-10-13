@@ -13,7 +13,6 @@ Reads the same config.json as server.py.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import sys
@@ -54,12 +53,9 @@ def cmd_list(cfg: dict, args) -> int:
         print("(no cards)")
         return 0
     for c in cards:
-        # 只打印指纹摘要：原始 device_fp 是绑定凭证，不进终端回滚缓冲、不进工单
-        fp = c.get("device_fp")
-        mask = hashlib.sha256((fp or "").strip().lower().encode()).hexdigest()[:16].upper() if fp else "-"
         print(
             f"{c.get('card_preview') or '-' :23s}  {c['card_hash'][:16]}  "
-            f"dev={mask}  expire={c['expire']}  "
+            f"fp={c['device_fp'] or '-'}  expire={c['expire']}  "
             f"state={c['state']}  batch={c.get('batch') or '-'}"
         )
     return 0

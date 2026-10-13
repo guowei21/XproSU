@@ -196,21 +196,62 @@ class AndroidGhostlockRepository(
     }
 
 
-    override suspend fun runExploit(pair: CpuPair, onLog: (String) -> Unit): Int {
+    /**
+     * 会话模式：session 由 ViewModel 在运行前现场向服务端取得（Kd + 容器），
+     * 投喂给引擎后立即删除临时文件。传 null 时（Debug 旁路）走旧路径。
+     */
+    override suspend fun runExploit(
+        pair: CpuPair,
+        onLog: (String) -> Unit,
+        session: com.ghostlock.pro.license.SessionKey?,
+    ): Int {
         val workDir = filesDir
         return try {
             val binary = File(appContext.applicationInfo.nativeLibraryDir, "libghostlock.so")
-            require(binary.isFile) { "missing native binary: ${binary.absolutePath}" }
-            val kd = payloadKey()
-            if (kd == null) {
-                if (BuildConfig.DEBUG) onLog("error: no license")
-                return 1
+            require(binary.isFile) { "missing native binary: " + binary.absolutePath }
+            var sessionKd: ByteArray? = null
+            if (session != null) {
+                offsetsFile.writeBytes(session.blob)
+                sessionKd = session.kd
+            } else {
+                val kd0 = payloadKey()
+                if (kd0 == null) {
+                    if (BuildConfig.DEBUG) onLog("error: no license")
+                    return 1
+                }
+                sessionKd = kd0
+                if (!ensureOffsetsBlob()) {
+                    if (BuildConfig.DEBUG) onLog("error: missing activation payload (" + OffsetsFileName + ")")
+                    return 1
+                }
             }
-            if (!ensureOffsetsBlob()) {
-                if (BuildConfig.DEBUG) onLog("error: missing activation payload ($OffsetsFileName)")
-                return 1
+            val kd = sessionKd!!
+            try {
+                return runExploitInner(pair, onLog, kd, workDir, binary)
+            } finally {
+                if (session != null) {
+                    // 容器与密钥都是一次性材料：用完立刻从磁盘与内存清掉。
+                    runCatching { offsetsFile.delete() }
+                    kd.fill(0)
+                    session.kd.fill(0)
+                }
             }
-            val keyHex = kd.joinToString("") { "%02x".format(it) }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            if (BuildConfig.DEBUG) onLog("error: " + (error::class.simpleName ?: "?") + ": " + error.message)
+            1
+        }
+    }
+
+    private suspend fun runExploitInner(
+        pair: CpuPair,
+        onLog: (String) -> Unit,
+        kd: ByteArray,
+        workDir: File,
+        binary: File,
+    ): Int {
+        val keyHex = kd.joinToString("") { "%02x".format(it) }
             if (prepareKsud(workDir, onLog) != null) onLog("ksud ready") else onLog("warning: ksud not found")
             // the root script creates its log as root, so one name per run
             // keeps the last run's lines out of this run's log
@@ -259,24 +300,18 @@ class AndroidGhostlockRepository(
                     cardTagHex()?.let { environment()["GHOSTLOCK_CARD"] = it }
                     if (safeModeEnabled) environment()["GHOSTLOCK_DISABLE_MODULES"] = "1"
                 }
-            try {
-                runProcess(command, onLog = {}, captureOutput = false)
-            } finally {
-                withContext(Dispatchers.IO) {
-                    tailer.interrupt()
-                    tailer.join(1000)
-                    tailKsuLog(nativeLog, nativeOffset, onLog)
-                    tailKsuLog(ksuLog, ksuOffset, ksuSink)
-                    // 引擎日志是一次性排错产物，运行结束即删，不留明文残留。
-                    runCatching { nativeLog.delete() }
-                    runCatching { ksuLog.delete() }
-                }
+        return try {
+            runProcess(command, onLog = {}, captureOutput = false)
+        } finally {
+            withContext(Dispatchers.IO) {
+                tailer.interrupt()
+                tailer.join(1000)
+                tailKsuLog(nativeLog, nativeOffset, onLog)
+                tailKsuLog(ksuLog, ksuOffset, ksuSink)
+                // 引擎日志是一次性排错产物，运行结束即删，不留明文残留。
+                runCatching { nativeLog.delete() }
+                runCatching { ksuLog.delete() }
             }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            if (BuildConfig.DEBUG) onLog("error: ${error::class.simpleName}: ${error.message}")
-            1
         }
     }
 
@@ -291,7 +326,8 @@ class AndroidGhostlockRepository(
         val version = System.getProperty("os.version", "").orEmpty()
         // A packaged entry always counts: the engine validates it far more
         // strictly than the app could, and reports the reason if it refuses.
-        return version in SupportedKernels.UNAMES || offsetsFile.isFile
+        // 会话模式下容器是临时文件（用完即删），不能用它判断内核是否支持。
+        return version in SupportedKernels.UNAMES
     }
 
     /**

@@ -3,7 +3,6 @@ package com.ghostlock.pro.license
 import android.content.Context
 import com.ghostlock.pro.BuildConfig
 import com.ghostlock.pro.R
-import java.io.IOException
 import java.security.MessageDigest
 import java.security.SecureRandom
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +10,17 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 private fun nowSeconds(): Long = System.currentTimeMillis() / 1000L
+
+/**
+ * 一次会话的解密材料：Kd 只存在于内存，随取随用，绝不落盘。
+ *
+ * @param kd      32 字节载荷密钥，由服务端现场封进本机 TEE 公钥下发。
+ * @param blob    GLT2 容器，与 Kd 一一对应，仅供本次运行。
+ */
+data class SessionKey(
+    val kd: ByteArray,
+    val blob: ByteArray,
+)
 
 /** 激活结果。 */
 sealed interface ActivationResult {
@@ -40,6 +50,13 @@ class LicenseRepository(
 ) {
     private val appContext = context.applicationContext
     private val store = LicenseStore(appContext)
+
+    /**
+     * Debug 旁路才有的内存密钥。Release 永远是 null：Kd 只在
+     * [fetchSessionKey] 的返回值里活一次，投喂引擎后即被丢弃。
+     */
+    @Volatile
+    private var debugKey: ByteArray? = null
     private val deviceKey = DeviceKey()
     private val payloadFile = File(appContext.filesDir, PAYLOAD_NAME)
 
@@ -51,14 +68,8 @@ class LicenseRepository(
      */
     val supported: Boolean = DeviceFingerprint.supported(appContext)
 
-    /**
-     * 内部绑定标识：真实指纹的 64 位 hex，与凭据里存的值比较用。
-     * **不要**显示它（它是可重放的绑定凭证），界面用 [deviceCode]。
-     */
+    /** 界面上展示的设备码（真实 Widevine ID 的 64 位大写 hex）。 */
     val deviceId: String = DeviceFingerprint.display(appContext).orEmpty()
-
-    /** 界面/工单用设备码（指纹摘要，不可用于绑定）；不支持时为空串。 */
-    val deviceCode: String = DeviceFingerprint.code(appContext).orEmpty()
 
     /**
      * 参与密码学的 32 字节身份，hex 形式随激活请求上传。
@@ -76,11 +87,10 @@ class LicenseRepository(
     val configured: Boolean = client != null
 
     /**
-     * 是否已授权：凭据 + 载荷密钥 + 容器三者齐备，且凭据属于本机。
+     * 本地是否持有有效凭据（不代表当前可用：真正的判定在 [fetchSessionKey]，
+     * 它每次都会向服务端确认卡密状态）。
      *
-     * Debug 且**未配置授权服务**时整体放行，让本地调试能进主界面；引擎那边
-     * 没有载荷仍然会拒绝运行，所以这个旁路不会假装成一次成功的提权。
-     * 这里是唯一判定处 —— 登录窗口、主界面守卫、ViewModel 全部读它。
+     * Debug 且**未配置授权服务**时整体放行，让本地调试能进主界面。
      */
     fun isActivated(): Boolean =
         debugBypass() ||
@@ -90,15 +100,75 @@ class LicenseRepository(
                                     it.cardKey.isNotEmpty() &&
                                     it.state != STATE_DISABLED &&
                                     (it.expireAt == 0L || it.expireAt > nowSeconds())
-                        } == true &&
-                        payloadKey() != null &&
-                        payloadFile.isFile && payloadFile.length() > 0)
+                        } == true)
 
     /** 仅 Debug 构建且未配置服务地址时为真；Release 恒为 false。 */
     private fun debugBypass(): Boolean = BuildConfig.DEBUG && client == null
 
-    /** 引擎需要的 32 字节载荷密钥；无授权时返回 null。 */
-    fun payloadKey(): ByteArray? = store.loadPayloadKey()
+    /** Debug 旁路下允许在没有会话密钥时继续运行（仅本机调试）。 */
+    fun debugSessionAllowed(): Boolean = debugBypass()
+
+    /**
+     * 仅供 Debug 旁路：Release 永远返回 null —— Kd 不落盘，没有本地密钥可取。
+     */
+    fun cachedDebugPayloadKey(): ByteArray? = if (debugBypass()) debugKey else null
+
+    /**
+     * 打开 App 时的在线核对：确认卡密仍然有效。
+     *
+     * 与 [fetchSessionKey] 用同一条服务端判定；失败时 [clear] 本地凭据，
+     * 返回 false 让调用方退回登录窗口。
+     */
+    suspend fun verifyOnline(): Boolean = withContext(Dispatchers.IO) {
+        if (debugBypass()) return@withContext true
+        if (!cached()) return@withContext false
+        if (fetchSessionKey() != null) {
+            true
+        } else {
+            // 服务端明确拒绝时 fetchSessionKey 已 clear；网络不通也保持未授权，
+            // 因为没有 Kd 就解不开任何东西，"能打开界面" 不等于 "能用"。
+            false
+        }
+    }
+
+    /**
+     * 会话式取密钥：每次启动、每次运行提权前必须调用。
+     *
+     * 服务端现场校验卡密（删卡/封卡/过期立即 1001/1003），然后把 Kd 封进
+     * 本机 TEE 公钥发回来。Kd 和容器**只存在于内存**，返回后由调用方立即
+     * 投喂给引擎，不落盘。网络失败或服务端拒绝 = 本次无法使用（fail-closed）。
+     */
+    suspend fun fetchSessionKey(): SessionKey? = withContext(Dispatchers.IO) {
+        val record = cached() ?: return@withContext null
+        val api = client ?: return@withContext null
+        try {
+            val response = api.session(
+                card = record.cardKey.trim().uppercase(),
+                deviceFpHex = deviceFpHex,
+                pubKeyHex = DeviceFingerprint.hex(deviceKey.publicKey()),
+            )
+            val blob = response.bytes(GlBlob.T_BLOB) ?: return@withContext null
+            val wrapped = response.bytes(GlBlob.T_WRAPPED) ?: return@withContext null
+            val kd = try {
+                deviceKey.unwrap(wrapped, record.cardKey.trim().uppercase())
+            } catch (_: Exception) {
+                return@withContext null
+            }
+            // 服务端返回的到期时间同步回本地记录，界面显示与真实状态一致。
+            response.long(GlBlob.T_EXPIRE)?.let { exp ->
+                if (exp > 0L && record.expireAt != exp) {
+                    store.save(record.copy(expireAt = exp))
+                }
+            }
+            if (debugBypass()) debugKey = kd
+            SessionKey(kd, blob)
+        } catch (e: LicenseRejected) {
+            clear()
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     /**
      * 距离到期还剩多少秒；永久授权返回 null。
@@ -138,8 +208,20 @@ class LicenseRepository(
         return DeviceFingerprint.hex(digest.copyOfRange(0, CARD_TAG_SIZE))
     }
 
-    /** 引擎需要的容器路径；不存在时返回 null。 */
-    fun payloadPath(): String? = payloadFile.takeIf { it.isFile && it.length() > 0 }?.absolutePath
+    /**
+     * 引擎需要的容器路径。
+     *
+     * 会话模式下容器由 [fetchSessionKey] 现场返回，写入临时文件给引擎
+     * 一次性使用，`clear()` 时删除。返回 null 表示当前没有可用的会话容器。
+     */
+    fun stageContainer(blob: ByteArray): String? {
+        return try {
+            payloadFile.writeBytes(blob)
+            payloadFile.absolutePath
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     /** 用卡密激活本机，并取回本机专属载荷。 */
     suspend fun activate(cardKey: String): ActivationResult = withContext(Dispatchers.IO) {
@@ -204,7 +286,14 @@ class LicenseRepository(
                 expireAt = expire,
                 activatedAt = System.currentTimeMillis(),
             )
-            return@withContext persistActivation(blob, kd, record)
+            // Kd 与容器**只用于这一刻的完整性校验**，随后即弃：它们不写盘。
+            // 落盘的只有凭据；每次使用（打开 App / 点立即 Root）都由
+            // fetchSessionKey 现场向服务端再要一份。
+            @Suppress("UNUSED_EXPRESSION")
+            blob.size
+            kd.fill(0)
+            store.save(record)
+            return@withContext ActivationResult.Ok(record)
         } catch (e: LicenseRejected) {
             ActivationResult.Rejected(e.code, e.message ?: appContext.getString(R.string.license_verify_failed))
         } catch (e: LicenseTransport) {
@@ -262,52 +351,12 @@ class LicenseRepository(
         }
     }
 
-    /** 收回授权：凭据与载荷一起删，避免留下还能用的容器。 */
+    /** 收回授权：凭据一并清掉，历史遗留的容器/密钥字段也删。 */
     fun clear() {
         store.clear()
         runCatching { payloadFile.delete() }
-    }
-
-    /**
-     * 原子替换容器。
-     *
-     * 先写临时文件再 `rename`，这样引擎永远看不到半个文件；`rename(2)` 本身
-     * 就是原子替换，**不需要先删目标** —— 先删会留下一个「offsets.glt 不存在」
-     * 的窗口，引擎恰好在那时启动就会报缺载荷。任何失败都清掉临时文件。
-     */
-    private fun writePayload(blob: ByteArray): Boolean {
-        val tmp = File(payloadFile.parentFile, "$PAYLOAD_NAME.tmp")
-        return try {
-            tmp.writeBytes(blob)
-            if (!tmp.renameTo(payloadFile)) {
-                runCatching { tmp.delete() }
-                false
-            } else {
-                true
-            }
-        } catch (e: Exception) {
-            runCatching { tmp.delete() }
-            false
-        }
-    }
-
-    /** 载荷、密钥、凭据三步一起落盘；任何一步失败都整体回滚到未授权。 */
-    private fun persistActivation(blob: ByteArray, kd: ByteArray, record: LicenseRecord): ActivationResult {
-        return try {
-            if (!writePayload(blob)) {
-                throw IOException("cannot write the activation payload")
-            }
-            store.savePayloadKey(kd)
-            store.save(record)
-            ActivationResult.Ok(record)
-        } catch (e: Exception) {
-            // 已经动过磁盘就必须把状态收干净：留下"凭据是旧的、载荷是新的"
-            // 比直接退回未激活更糟 —— 前者看起来已授权却永远跑不起来。
-            clear()
-            ActivationResult.Unreachable(
-                appContext.getString(R.string.license_payload_write_failed),
-            )
-        }
+        debugKey?.fill(0)
+        debugKey = null
     }
 
     private companion object {

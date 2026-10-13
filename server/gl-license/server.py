@@ -87,27 +87,10 @@ WIRE_TAG_FIELDS: dict[int, str] = {
 }
 
 
-def mask_device_fp(device_fp: str | None) -> str | None:
-    """Stable, non-reversible display id for a bound handset.
-
-    The raw Widevine id *is* the binding credential: whoever reads it can
-    replay an activation for that card.  So no admin client ever receives it --
-    the console, the JSON admin API and the CLI all show this digest instead.
-    The app shows the very same 16 hex on its login screen, so support can
-    still match a customer's screenshot to a card row.
-    """
-    if not device_fp:
-        return None
-    return sha256(device_fp.strip().lower()).hex()[:16].upper()
-
-
 def public_card(row: dict) -> dict:
-    """Card row as sent to any admin client; the raw device_fp never leaves."""
-    out = dict(row)
-    fp = out.pop("device_fp", None)
-    out["device_fp_mask"] = mask_device_fp(fp)
-    out["bound"] = bool(fp)
-    return out
+    """Card row as sent to any admin client (device_fp included: support
+    matches it against the code the app shows on its login screen)."""
+    return dict(row)
 
 
 def load_config(path: str | None = None) -> dict:
@@ -399,7 +382,27 @@ class _Handler(BaseHTTPRequestHandler):
             route = self._route()
             peer_ip = client_ip(self.headers, self.client_address[0])
 
-            if route == "/api/activate":
+            if route == "/api/session":
+                if not self.ctx.allow_activate(peer_ip):
+                    if is_wire:
+                        self._send_wire_error(1005, "请求过于频繁，请稍后再试")
+                    else:
+                        self._send_json({"code": 1005, "msg": "请求过于频繁，请稍后再试"}, 429)
+                    return
+                if is_wire:
+                    entries = self._parse_wire_request(body)
+                    if entries is None:
+                        self._send_wire_error(1005, "请求格式错误")
+                        return
+                    try:
+                        data = self._wire_fields(entries)
+                    except ValueError:
+                        self._send_wire_error(1005, "请求格式错误")
+                        return
+                    self._session(data, True)
+                else:
+                    self._session(self._parse_json(body), False)
+            elif route == "/api/activate":
                 if not self.ctx.allow_activate(peer_ip):
                     if is_wire:
                         self._send_wire_error(1005, "请求过于频繁，请稍后再试")
@@ -543,12 +546,6 @@ class _Handler(BaseHTTPRequestHandler):
             "pubkey_policy": str(self.ctx.cfg.get("pubkey_policy", "rotate")),
         }
         security = self.ctx.store.security_stats()
-        security["recent_events"] = [
-            {
-                k: v for k, v in event.items() if k != "device_fp"
-            } | {"device_mask": mask_device_fp(event.get("device_fp"))}
-            for event in security.get("recent_events", [])
-        ]
         self._send_ok({
             "code": 0, "stats": stats, "cards": cards, "sys": sys_info,
             "security": security,
@@ -736,6 +733,81 @@ class _Handler(BaseHTTPRequestHandler):
             )
         else:
             self._send_ok({"code": 0, "expire": expire, "state": state})
+
+    # -- 会话式取密钥：每次启动/每次运行都要问服务端，Kd 从不落盘 -------------
+    #
+    # 与 activate 的区别：activate 是绑定（写库、发 token）；session 是"租借"——
+    # 校验卡密与设备指纹，但**不写任何状态**，也**不发 token**。后台删卡/封卡
+    # 立刻生效：下一次 session 直接 1001。离线 = 用不了，这是刻意的。
+    def _session(self, data: dict | None, wire: bool) -> None:
+        if data is None:
+            self._fail(1005, "参数错误", wire)
+            return
+        card = normalize_card_key(data.get("card") or "")
+        device_fp_hex = data.get("device_fp")
+        pubkey_hex = data.get("pubkey")
+        if not card:
+            self._fail(1005, "参数错误", wire)
+            return
+        try:
+            device_fp = bytes.fromhex(device_fp_hex or "")
+            pubkey = bytes.fromhex(pubkey_hex or "")
+        except (TypeError, ValueError):
+            self._fail(1005, "参数错误", wire)
+            return
+        if len(device_fp) != 32 or len(pubkey) != 65 or pubkey[0] != 0x04:
+            self._fail(1005, "参数错误", wire)
+            return
+
+        card_hash_value = card_hash(card)
+        local = self.ctx.store.get_card(card_hash_value)
+        if local is None:
+            self._fail(1001, "卡密无效", wire)
+            return
+        if local.get("state") in ("disabled", "revoked"):
+            self._fail(1001, "卡密已失效", wire)
+            return
+        expire = int(local.get("expire") or 0)
+        if expire != 0 and expire <= int(time.time()):
+            self._fail(1003, "卡密已过期", wire)
+            return
+        # 必须已经绑定到这台设备（activate 做过的）；没绑过先去 activate。
+        if not local.get("device_fp"):
+            self._fail(1002, "卡密尚未激活", wire)
+            return
+        if local["device_fp"] != device_fp_hex.lower():
+            self._fail(1002, "卡密已绑定其它设备", wire)
+            return
+        # 换了公钥（重装/清数据）在 session 里是允许的：Kd 永远封给"本次请求的公钥"，
+        # 所以每次取都是新封包，设备上不需要留任何旧密钥。
+        if self.ctx.payload_glp is None:
+            self._fail(1005, "服务暂不可用", wire)
+            return
+        kd = hkdf_sha256(self.ctx.master_key, sha256(card), device_fp, 32)
+        try:
+            blob = build_glt2_from_glp(self.ctx.payload_glp, device_fp, card, kd, expire)
+            wrapped = ecies_wrap(pubkey, kd, card)
+        except Exception:
+            self._fail(1005, "服务暂不可用", wire)
+            return
+        if wire:
+            self._send_wire_ok(
+                [
+                    (TAG_EXPIRE, struct.pack("<Q", expire)),
+                    (TAG_BLOB, blob),
+                    (TAG_WRAPPED, wrapped),
+                    (TAG_MSG, b"ok"),
+                ]
+            )
+        else:
+            self._send_ok(
+                {
+                    "code": 0,
+                    "expire": expire,
+                    "blob": blob.hex(),
+                    "wrapped": wrapped.hex(),
+                }
+            )
 
     # -- CLI / JSON admin handlers ------------------------------------------
 

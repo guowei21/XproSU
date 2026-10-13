@@ -80,9 +80,19 @@ class LoginActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 已激活 → 直接进主界面，不显示登录页。
+        // 已有凭据也不直接放行：先向服务端核对一次卡密状态（删卡/封卡立刻生效），
+        // 通过才进主界面；不通过清掉本地凭据，停在这个窗口让用户看到原因。
         if (license.isActivated()) {
-            enterMain()
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            scope.launch {
+                val ok = license.verifyOnline()
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                if (ok) {
+                    enterMain()
+                } else {
+                    startAuthorizationCheck()
+                }
+            }
             return
         }
 
@@ -92,7 +102,7 @@ class LoginActivity : ComponentActivity() {
             ) {
                 Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
                     LoginScreen(
-                        deviceCode = license.deviceCode,
+                        deviceCode = license.deviceId,
                         configured = license.configured,
                         onCopyDeviceCode = ::copyDeviceCode,
                         onActivate = ::activate,
@@ -144,6 +154,28 @@ class LoginActivity : ComponentActivity() {
             }
         }
     }
+    /** 在线核对失败：渲染登录窗口（isActivated() 已为 false，界面会显示未授权）。 */
+    private fun startAuthorizationCheck() {
+        setContent {
+            MiuixTheme(
+                colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme(),
+            ) {
+                Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
+                    LoginScreen(
+                        deviceCode = license.deviceId,
+                        configured = license.configured,
+                        onCopyDeviceCode = ::copyDeviceCode,
+                        onActivate = ::activate,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(padding),
+                    )
+                }
+            }
+        }
+        setupSystemBars()
+    }
+
     /** 主界面自己也会在未授权时回退到这里，所以这里只负责单向放行。 */
     private fun enterMain() {
         startActivity(Intent(this, MainActivity::class.java))

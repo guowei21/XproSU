@@ -36,25 +36,10 @@ object DeviceFingerprint {
     /**
      * 供界面展示的本机标识：真实 Widevine ID 的 64 位大写 hex。
      *
-     * **不要把它显示给用户、也不要发进工单**：它就是服务端校验用的原始
-     * `device_fp`（绑定凭证）—— 谁读到它，谁就能替这台设备重放一次激活。
-     * 界面请用 [code]。
+     * 这是设备级身份（跨卸载重装/清数据/恢复出厂不变），客服据此对单。
      */
     fun display(context: Context): String? =
         raw(context)?.let { hex(it).uppercase() }
-
-    /**
-     * 界面/工单用「设备码」：`SHA-256(小写 hex 指纹字符串)` 的前 16 位大写。
-     *
-     * 与服务端 `server.py:mask_device_fp` 逐字节一致，因此客服可以拿用户截图
-     * 直接和后台的 `device_fp_mask` 对上；而这个值**不是**绑定凭证 ——
-     * 它推导不回 32 字节指纹，也不能用来重放激活。
-     */
-    fun code(context: Context): String? = raw(context)?.let { fp ->
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-            .digest(hex(fp).toByteArray(Charsets.UTF_8))
-        digest.joinToString("") { "%02x".format(it) }.take(16).uppercase()
-    }
 
     /** 旧名字，等价于 [display]。 */
     fun of(context: Context): String? = display(context)

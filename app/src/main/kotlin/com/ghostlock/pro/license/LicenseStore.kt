@@ -47,25 +47,10 @@ class LicenseStore(context: Context) {
     }
 
     /**
-     * 载荷密钥 `Kd`（32 字节）。
-     *
-     * 与授权凭据同样用 Keystore AES-GCM 落盘，并且与凭据同生共死：`clear()` 一起删。
-     * 引擎从环境变量拿它，所以磁盘上留一份是必要的——但要保证改文件也伪造不出来。
+     * Kd **不再落盘**：每次使用前由 [LicenseRepository.fetchSessionKey] 现场向
+     * 服务端换取（封在本机 TEE 公钥里），用完即弃。`clear()` 仍会清掉历史遗留的
+     * `p` 字段，保证旧版本升级上来不会留一份旧密钥在盘上。
      */
-    fun savePayloadKey(key: ByteArray) {
-        prefs.edit().putString(KEY_PAYLOAD, encrypt(key)).apply()
-    }
-
-    fun loadPayloadKey(): ByteArray? {
-        val blob = prefs.getString(KEY_PAYLOAD, null) ?: return null
-        return try {
-            decrypt(blob)
-        } catch (_: Exception) {
-            clearPayload()
-            null
-        }
-    }
-
     fun clearPayload() {
         prefs.edit().remove(KEY_PAYLOAD).apply()
     }

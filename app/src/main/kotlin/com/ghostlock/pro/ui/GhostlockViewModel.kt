@@ -43,8 +43,7 @@ class GhostlockViewModel(
     private val effectChannel = Channel<GhostlockEffect>(Channel.BUFFERED)
     private val mutableState = MutableStateFlow(
         GhostlockUiState(
-            // 界面只显示指纹摘要：原始 device_fp 是可重放的绑定凭证
-            deviceId = license.deviceCode,
+            deviceId = license.deviceId,
             licenseConfigured = license.configured,
             logsVisible = BuildConfig.DEBUG,
         ),
@@ -125,7 +124,15 @@ class GhostlockViewModel(
                     send(GhostlockEffect.LicenseExpired)
                     return@launch
                 }
-                val code = runExploitUseCase(repository.selectedCpuPair(), ::appendLog)
+                // 每次点击「立即获取 Root」都向服务端换一次解密材料：
+                // 卡密被删/被封/过期 → 这里拿不到 Kd，直接中止，引擎根本不会被执行。
+                val session = license.fetchSessionKey()
+                if (session == null && !license.debugSessionAllowed()) {
+                    appendLog("result: license check failed (network or server refused)")
+                    send(GhostlockEffect.LicenseExpired)
+                    return@launch
+                }
+                val code = runExploitUseCase(repository.selectedCpuPair(), ::appendLog, session)
                 appendLog(if (code == 0) "result: exploit completed" else "result: exploit failed (exit code=$code)")
                 appendLog("exit code=$code")
                 mutableState.update {
@@ -211,7 +218,7 @@ class GhostlockViewModel(
                             licenseExpiry = result.record.expiry,
                         )
                     }
-                    if (BuildConfig.DEBUG) appendLog("license activated on ${license.deviceCode}")
+                    if (BuildConfig.DEBUG) appendLog("license activated on ${license.deviceId}")
                     send(GhostlockEffect.Toast(R.string.activate_success))
                     dismissDialog()
                 }

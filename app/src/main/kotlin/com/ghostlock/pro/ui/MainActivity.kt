@@ -54,6 +54,12 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             if (!license.checkExpiry()) {
                 navigateToLogin()
+                return@launch
+            }
+            // 每次打开都向服务端核对一次卡密状态：删卡/封卡/过期在下次打开时立刻生效。
+            // 网络不通或服务端拒绝都退回登录窗口（fail-closed）。
+            if (!license.verifyOnline()) {
+                navigateToLogin()
             }
         }
     }

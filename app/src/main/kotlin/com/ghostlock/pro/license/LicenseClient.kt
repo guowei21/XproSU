@@ -64,6 +64,27 @@ class LicenseClient(
             ),
         )
 
+    /**
+     * 会话式取密钥：每次启动、每次提权前都调一次。
+     *
+     * 服务端校验卡密状态后，把 Kd 现场封进**本次请求的公钥**发回来。
+     * 删卡/封卡立即生效；Kd 只存在于内存，App 不落盘。
+     */
+    fun session(card: String, deviceFpHex: String, pubKeyHex: String): GlBlob.Decoded =
+        post(
+            path = PATH_SESSION,
+            body = GlBlob.encode(
+                magic = GlBlob.MAGIC_WIRE,
+                kind = GlBlob.KIND_REQUEST,
+                code = 0,
+                entries = listOf(
+                    GlBlob.T_CARD to GlBlob.str(card),
+                    GlBlob.T_DEVICE_FP to GlBlob.str(deviceFpHex),
+                    GlBlob.T_PUBKEY to GlBlob.str(pubKeyHex),
+                ),
+            ),
+        )
+
     private fun post(path: String, body: ByteArray): GlBlob.Decoded {
         val url = try {
             URL(base + path)
@@ -139,6 +160,7 @@ class LicenseClient(
         const val CONTENT_TYPE = "application/octet-stream"
         const val PATH_ACTIVATE = "/api/activate"
         const val PATH_HEARTBEAT = "/api/heartbeat"
+        const val PATH_SESSION = "/api/session"
 
         /** 响应体硬上限：正常激活响应 1 KB 出头，2 MiB 不可能误伤。 */
         const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024

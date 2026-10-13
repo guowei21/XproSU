@@ -8,5 +8,9 @@ class LoadKernelSnapshotUseCase(private val repository: GhostlockRepository) {
 }
 
 class RunExploitUseCase(private val repository: GhostlockRepository) {
-    suspend operator fun invoke(pair: CpuPair, onLog: (String) -> Unit) = repository.runExploit(pair, onLog)
+    suspend operator fun invoke(
+        pair: CpuPair,
+        onLog: (String) -> Unit,
+        session: com.ghostlock.pro.license.SessionKey?,
+    ) = repository.runExploit(pair, onLog, session)
 }

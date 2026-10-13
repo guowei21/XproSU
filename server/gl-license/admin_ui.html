@@ -1215,9 +1215,8 @@ function renderLists(cards) {
       ? `<span class="chip mono" style="color:#fff;font-weight:700;" onclick="copyText('${c.card_preview}')">📋 ${c.card_preview}</span><div class="mono" style="font-size:11px;color:var(--text-muted);margin-top:3px;">#${c.card_hash.slice(0,12)}</div>`
       : `<span class="chip mono" onclick="copyText('${c.card_hash}')">#${c.card_hash.slice(0,16)}...</span><div style="font-size:11px;color:var(--text-muted);">历史哈希卡</div>`;
 
-    // 只显示指纹摘要：原始 device_fp 是绑定凭证，服务端不再回传（见 mask_device_fp）
-    const fpCell = c.bound
-      ? `<span class="chip mono" onclick="copyText('${c.device_fp_mask || ''}')" title="指纹摘要（SHA-256 前 16 位），与客户端登录页显示一致">${c.device_fp_mask || ''}</span>`
+    const fpCell = c.device_fp
+      ? `<span class="chip mono" onclick="copyText('${c.device_fp}')" title="${c.device_fp}">${c.device_fp.slice(0,16)}...</span>`
       : '<span style="color:var(--text-muted);">—</span>';
 
     return `<tr>
@@ -1237,7 +1236,7 @@ function renderLists(cards) {
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
           ${c.state !== 'disabled' && c.state !== 'revoked' ? `<button class="btn btn-amber btn-sm" onclick="cardAction('disable','${c.card_hash}')">禁用踢线</button>` : ''}
           ${c.state === 'disabled' ? `<button class="btn btn-emerald btn-sm" onclick="cardAction('enable','${c.card_hash}')">恢复启用</button>` : ''}
-          ${c.bound ? '<span class="chip" title="一张卡密绑定一台设备，绑定不可解除">🔒 已绑机</span>' : ''}
+          ${c.device_fp ? '<span class="chip" title="一张卡密绑定一台设备，绑定不可解除">🔒 已绑机</span>' : ''}
           ${c.state !== 'revoked' ? `<button class="btn btn-rose btn-sm" onclick="cardAction('revoke','${c.card_hash}')">吊销</button>` : ''}
           <button class="btn btn-rose btn-sm" onclick="cardAction('delete','${c.card_hash}')">删卡</button>
         </div>
@@ -1260,8 +1259,8 @@ function renderLists(cards) {
       </div>
       <div class="m-card-grid">
         <div>
-          <div class="m-kv-label">设备码（指纹摘要，点击复制）</div>
-          <div class="m-kv-val mono" onclick="copyText('${c.device_fp_mask || ''}')">${c.bound ? (c.device_fp_mask || '—') : '未绑定'}</div>
+          <div class="m-kv-label">绑定设备指纹 (点击复制)</div>
+          <div class="m-kv-val mono" onclick="copyText('${c.device_fp || ''}')">${c.device_fp ? c.device_fp.slice(0, 16) + '...' : '未绑定'}</div>
         </div>
         <div>
           <div class="m-kv-label">到期时间</div>
@@ -1279,7 +1278,7 @@ function renderLists(cards) {
       <div class="m-card-actions">
         ${c.state !== 'disabled' && c.state !== 'revoked' ? `<button class="btn btn-amber btn-sm" onclick="cardAction('disable','${c.card_hash}')">禁用踢线</button>` : ''}
         ${c.state === 'disabled' ? `<button class="btn btn-emerald btn-sm" onclick="cardAction('enable','${c.card_hash}')">恢复启用</button>` : ''}
-        ${c.bound ? '<span class="chip" title="一张卡密绑定一台设备，绑定不可解除">🔒 已绑机</span>' : ''}
+        ${c.device_fp ? '<span class="chip" title="一张卡密绑定一台设备，绑定不可解除">🔒 已绑机</span>' : ''}
         ${c.state !== 'revoked' ? `<button class="btn btn-rose btn-sm" onclick="cardAction('revoke','${c.card_hash}')">吊销</button>` : ''}
         <button class="btn btn-rose btn-sm" onclick="cardAction('delete','${c.card_hash}')">删卡</button>
       </div>

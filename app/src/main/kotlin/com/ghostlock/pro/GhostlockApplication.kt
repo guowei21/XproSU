@@ -23,7 +23,7 @@ class GhostlockApplication : Application() {
 
     fun createRepository(): GhostlockRepository = AndroidGhostlockRepository(
         context = this,
-        payloadKey = { license.payloadKey() },
+        payloadKey = { license.cachedDebugPayloadKey() },
         deviceFpHex = { license.deviceFpHex },
         cardTagHex = { license.cardTagHex() },
     )

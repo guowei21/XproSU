@@ -34,7 +34,18 @@ interface GhostlockRepository {
      */
     suspend fun importOffsets(bytes: ByteArray): OffsetImportResult
 
-    suspend fun runExploit(pair: CpuPair, onLog: (String) -> Unit): Int
+    /**
+     * 执行提权。
+     *
+     * [session] 是**本次运行前**由 LicenseRepository 向服务端现场换来的解密材料
+     * （Kd + GLT2 容器，只在内存）。Release 路径必须传它：Kd 不落盘，引擎
+     * 也没有任何本地密钥可用。传 null 只用于 Debug 旁路。
+     */
+    suspend fun runExploit(
+        pair: CpuPair,
+        onLog: (String) -> Unit,
+        session: com.ghostlock.pro.license.SessionKey?,
+    ): Int
 
     fun close()
 }
