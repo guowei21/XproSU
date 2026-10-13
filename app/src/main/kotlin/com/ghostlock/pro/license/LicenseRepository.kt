@@ -121,7 +121,7 @@ class LicenseRepository(
      */
     suspend fun verifyOnline(): Boolean = withContext(Dispatchers.IO) {
         if (debugBypass()) return@withContext true
-        if (!cached()) return@withContext false
+        if (cached() == null) return@withContext false
         if (fetchSessionKey() != null) {
             true
         } else {
