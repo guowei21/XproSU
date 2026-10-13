@@ -42,8 +42,24 @@ jobs:
           java-version: "21"
           distribution: temurin
 
+      # 自建 Android SDK：android-actions/setup-android 在新版 cmdline-tools 下
+      # 会尝试安装已废弃的 'tools' 包而失败（sdkmanager: Failed to find package 'tools'），
+      # 所以这里直接下 cmdline-tools 并显式装需要的组件。
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          set -euo pipefail
+          SDK="$ANDROID_HOME"
+          mkdir -p "$SDK/cmdline-tools"
+          cd "$RUNNER_TEMP"
+          url="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+          curl -fL "$url" -o cmdline-tools.zip
+          unzip -q -o cmdline-tools.zip -d "$SDK/cmdline-tools"
+          mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
+          export ANDROID_SDK_ROOT="$SDK"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" --install \
+            "platform-tools" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tail -5
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" --list_installed 2>/dev/null | head -12
 
       - name: Cache ONDK
         id: ondk-cache
