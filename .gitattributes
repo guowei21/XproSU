@@ -1,0 +1,18 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Shell scripts must stay LF: CRLF makes ./gradlew fail with bad interpreter on CI
+gradlew text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+
+# Windows batch files keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binaries are never normalized
+*.jar binary
+*.so binary
+*.png binary
+*.webp binary
+*.jpg binary

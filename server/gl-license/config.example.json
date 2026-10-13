@@ -1,0 +1,10 @@
+{
+  "listen_host": "0.0.0.0",
+  "listen_port": 8787,
+  "admin_key": "CHANGE-ME-admin-key-long-random",
+  "admin_user": "CHANGE-ME-user",
+  "admin_pass_hash": "PUT-SHA256-HEX-OF-ADMIN-PASSWORD-HERE",
+  "master_key": "PUT-64-HEX-CHARS-HERE",
+  "payload_path": "payload.bin",
+  "db_path": "cards.db"
+}

@@ -1,0 +1,57 @@
+/ghostlock
+local.properties
+.gradle/
+.idea/
+*.iml
+app/build/
+libghostlock.so
+libextract.so
+build/
+.DS_Store
+__pycache__
+/devices
+target/
+*.jks
+*.keystore
+
+# ── 授权服务端的真实秘密：只留在服务器上，绝不入库 / 绝不随包分发 ──────────
+# config.json   含 master_key 与 U验证 凭据（泄露 = 全部卡密作废）
+# payload.bin   明文偏移表（分发即致命，见 ENCRYPTION-PLAN.md §1 泄漏点 8）
+# cards.db      卡密库（只存哈希，但仍是运营数据）
+server/gl-license/config.json
+server/gl-license/payload.bin
+server/gl-license/cards.db
+server/gl-license/*.db-journal
+server/gl-license/*.log
+
+# 本地明文表 / 解包产物
+table.json
+*.glt2
+
+# --- XproSU local additions ---
+local.properties.bak-*
+ghostlock_new
+engine_flags*.rsp
+dist/
+*.apk
+!dist/.gitkeep
+evidence/
+server/gl-license/__pycache__/
+server/gl-license/backups/
+server/gl-license/*.bak-*
+*.log
+.gradle/
+.kotlin/
+buildSrc/build/
+app/build/
+*.so.tmp
+
+# ── GitHub Actions：云端构建产物与签名材料 ────────────────────────────────
+# keystore 一律走 secret（SIGNING_KEY_BASE64），不在仓库里落地
+keystore.jks
+*.p12
+ghostlock.exe
+tools/extract_rs/target/
+.vscode/
+Thumbs.db
+*.apk.tmp

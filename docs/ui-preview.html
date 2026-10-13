@@ -1,0 +1,1380 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GhostLock — HyperOS 旗舰级 UI 预览</title>
+<style>
+  :root {
+    --bg-page: #ECEFF4;
+    --bg-phone: #F5F7FA;
+    --card: #FFFFFF;
+    --card-sub: #F8FAFC;
+    --card-border: rgba(15, 23, 42, 0.06);
+    --card-divider: rgba(15, 23, 42, 0.05);
+    
+    --text-main: #0F172A;
+    --text-sub: #334155;
+    --text-muted: #64748B;
+    --text-light: #94A3B8;
+
+    --accent: #0066FF;
+    --accent-hover: #0052CC;
+    --accent-soft: #EBF3FF;
+    --accent-border: #BAD6FF;
+
+    --green: #10B981;
+    --green-soft: #ECFDF5;
+    --green-border: #A7F3D0;
+    --green-dark: #047857;
+
+    --amber: #F59E0B;
+    --amber-soft: #FFFBEB;
+    --amber-border: #FDE68A;
+    --amber-dark: #B45309;
+
+    --red: #EF4444;
+    --red-soft: #FEF2F2;
+    --red-border: #FECACA;
+    --red-dark: #B91C1C;
+
+    --terminal-bg: #090E17;
+    --terminal-header: #111827;
+    --terminal-border: rgba(255, 255, 255, 0.08);
+
+    --shadow-card: 0 4px 20px -2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.02);
+    --shadow-btn: 0 8px 24px -4px rgba(0, 102, 255, 0.35);
+
+    --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Consolas, monospace;
+  }
+
+  /* 暗色模式变量覆盖 */
+  body.theme-dark {
+    --bg-page: #0B0E14;
+    --bg-phone: #0F141C;
+    --card: #18202C;
+    --card-sub: #121822;
+    --card-border: rgba(255, 255, 255, 0.08);
+    --card-divider: rgba(255, 255, 255, 0.06);
+
+    --text-main: #F8FAFC;
+    --text-sub: #CBD5E1;
+    --text-muted: #94A3B8;
+    --text-light: #64748B;
+
+    --accent: #2B7FFF;
+    --accent-hover: #1A6BFF;
+    --accent-soft: #14294D;
+    --accent-border: #1E4280;
+
+    --green-soft: #064E3B;
+    --green-border: #047857;
+    --green-dark: #6EE7B7;
+
+    --amber-soft: #78350F;
+    --amber-border: #B45309;
+    --amber-dark: #FDE68A;
+
+    --red-soft: #7F1D1D;
+    --red-border: #B91C1C;
+    --red-dark: #FCA5A5;
+
+    --terminal-bg: #06090F;
+    --terminal-header: #0D121B;
+    --terminal-border: rgba(255, 255, 255, 0.06);
+    --shadow-card: 0 4px 24px -2px rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg-page);
+    color: var(--text-main);
+    font-family: var(--ui);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 60px;
+    transition: background 0.25s ease;
+  }
+
+  /* ──────────────── 桌面外围控制走查栏 ──────────────── */
+  .preview-controller {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    padding: 10px 14px;
+    border-radius: 18px;
+    box-shadow: 0 10px 30px -8px rgba(0, 0, 0, 0.08);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 18px;
+    z-index: 100;
+    max-width: 480px;
+    width: 100%;
+  }
+  .controller-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .controller-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .controller-label::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .controller-buttons {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+  .controller-btn {
+    appearance: none;
+    background: var(--card-sub);
+    border: 1px solid transparent;
+    color: var(--text-muted);
+    font-size: 11.5px;
+    font-weight: 500;
+    font-family: inherit;
+    padding: 5px 11px;
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s ease;
+  }
+  .controller-btn:hover {
+    color: var(--text-main);
+    background: rgba(0, 102, 255, 0.08);
+  }
+  .controller-btn.active {
+    background: var(--accent);
+    color: #FFFFFF;
+    font-weight: 600;
+    box-shadow: 0 2px 8px rgba(0, 102, 255, 0.35);
+  }
+  .controller-divider {
+    width: 1px;
+    height: 18px;
+    background: var(--card-divider);
+  }
+  .theme-toggle-btn {
+    appearance: none;
+    background: var(--card-sub);
+    border: 1px solid var(--card-border);
+    color: var(--text-main);
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 5px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+  }
+
+  /* ──────────────── 仿真手机机身 ──────────────── */
+  .device-frame {
+    width: 396px;
+    height: 844px;
+    background: #000000;
+    border-radius: 50px;
+    padding: 10px;
+    box-shadow: 
+      0 0 0 1px rgba(255, 255, 255, 0.2),
+      0 30px 70px -15px rgba(15, 23, 42, 0.45),
+      0 0 0 10px #1E293B;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .screen-viewport {
+    width: 100%;
+    height: 100%;
+    background: var(--bg-phone);
+    border-radius: 40px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    scroll-behavior: smooth;
+    transition: background 0.25s ease;
+  }
+  .screen-viewport::-webkit-scrollbar { width: 0; height: 0; }
+
+  /* 顶部状态栏 */
+  .status-bar {
+    height: 42px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 24px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-main);
+    position: sticky;
+    top: 0;
+    background: rgba(245, 247, 250, 0.88);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    z-index: 50;
+    transition: background 0.25s ease;
+  }
+  body.theme-dark .status-bar {
+    background: rgba(15, 20, 28, 0.88);
+  }
+  .camera-notch {
+    position: absolute;
+    left: 50%;
+    top: 13px;
+    transform: translateX(-50%);
+    width: 11px;
+    height: 11px;
+    background: #000;
+    border-radius: 50%;
+    box-shadow: inset 0 0 2px rgba(255, 255, 255, 0.3);
+  }
+  .status-icons {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+  }
+
+  /* App 顶部导航条 (HyperOS 标准 Header) */
+  .app-header {
+    padding: 8px 18px 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .header-brand {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .brand-title {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-main);
+  }
+  .brand-badge {
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-family: var(--mono);
+  }
+  .header-actions {
+    display: flex;
+    gap: 6px;
+  }
+  .icon-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    display: grid;
+    place-items: center;
+    color: var(--text-muted);
+    cursor: pointer;
+    box-shadow: var(--shadow-card);
+    transition: all 0.15s;
+  }
+  .icon-btn:hover {
+    color: var(--text-main);
+  }
+
+  /* 容器内容堆叠 */
+  .content-stack {
+    padding: 0 14px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
+  }
+
+  /* ──────────────── 1. 状态总览 Hero 卡片 ──────────────── */
+  .hero-card {
+    background: var(--card);
+    border-radius: 24px;
+    padding: 16px 16px 14px;
+    box-shadow: var(--shadow-card);
+    border: 1px solid var(--card-border);
+    position: relative;
+    overflow: hidden;
+    transition: background 0.25s ease, border-color 0.25s ease;
+  }
+  .hero-status-row {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    margin-bottom: 14px;
+  }
+  .status-avatar {
+    width: 50px;
+    height: 50px;
+    border-radius: 17px;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    position: relative;
+    transition: all 0.3s ease;
+  }
+  .status-avatar svg {
+    width: 26px;
+    height: 26px;
+  }
+  .status-avatar-ring {
+    position: absolute;
+    inset: -3px;
+    border-radius: 20px;
+    border: 2px solid currentColor;
+    opacity: 0.25;
+    animation: pulseRing 2.4s infinite ease-in-out;
+  }
+  @keyframes pulseRing {
+    0%, 100% { transform: scale(1); opacity: 0.25; }
+    50% { transform: scale(1.08); opacity: 0.08; }
+  }
+
+  .status-texts {
+    flex: 1;
+    min-width: 0;
+  }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1.5px 7px;
+    border-radius: 6px;
+    margin-bottom: 3px;
+  }
+  .status-headline {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text-main);
+    letter-spacing: -0.01em;
+    line-height: 1.25;
+  }
+  .status-caption {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 嵌入式规格详情底板 */
+  .specs-panel {
+    background: var(--card-sub);
+    border-radius: 16px;
+    padding: 10px 12px;
+    border: 1px solid var(--card-border);
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .spec-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    gap: 10px;
+  }
+  .spec-key {
+    color: var(--text-light);
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+  .spec-val {
+    color: var(--text-main);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .spec-val.highlight {
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  /* ──────────────── 2. 商业化·卡密与授权卡片 ──────────────── */
+  .license-card {
+    background: var(--card);
+    border-radius: 20px;
+    padding: 13px 15px;
+    box-shadow: var(--shadow-card);
+    border: 1px solid var(--card-border);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .license-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .card-sec-title {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text-muted);
+    letter-spacing: 0.03em;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .card-sec-title svg {
+    width: 14px;
+    height: 14px;
+  }
+  .license-pill {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .license-pill.ok {
+    background: var(--green-soft);
+    color: var(--green);
+    border: 1px solid var(--green-border);
+  }
+  .license-pill.pending {
+    background: var(--amber-soft);
+    color: var(--amber);
+    border: 1px solid var(--amber-border);
+  }
+  
+  .device-id-box {
+    background: var(--card-sub);
+    border: 1px dashed var(--card-border);
+    border-radius: 12px;
+    padding: 8px 11px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  .id-label {
+    font-size: 11px;
+    color: var(--text-light);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .id-val {
+    font-size: 12px;
+    font-family: var(--mono);
+    color: var(--text-main);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .id-copy-btn {
+    appearance: none;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .id-copy-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent-border);
+  }
+
+  .license-action-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11.5px;
+    color: var(--text-muted);
+  }
+  .activate-text-btn {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 0;
+  }
+  .activate-text-btn:hover {
+    text-decoration: underline;
+  }
+
+  /* ──────────────── 3. 主操作按钮 (Hero Action) ──────────────── */
+  .action-block {
+    margin: 2px 0;
+  }
+  .main-button {
+    width: 100%;
+    height: 52px;
+    border: 0;
+    border-radius: 17px;
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+    color: #FFFFFF;
+    font-family: inherit;
+    font-size: 15.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    box-shadow: var(--shadow-btn);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+  }
+  .main-button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 28px -4px rgba(0, 102, 255, 0.45);
+  }
+  .main-button:active {
+    transform: scale(0.985);
+    box-shadow: 0 4px 14px -2px rgba(0, 102, 255, 0.4);
+  }
+  .main-button[data-state="busy"] {
+    background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+    box-shadow: 0 8px 24px -4px rgba(245, 158, 11, 0.35);
+  }
+  .main-button[data-state="disabled"] {
+    background: #CBD5E1;
+    color: #94A3B8;
+    box-shadow: none;
+    cursor: not-allowed;
+    transform: none;
+  }
+  body.theme-dark .main-button[data-state="disabled"] {
+    background: #252F3F;
+    color: #64748B;
+  }
+
+  /* ──────────────── 4. 参数与维护卡片 ──────────────── */
+  .section-card {
+    background: var(--card);
+    border-radius: 20px;
+    padding: 13px 15px;
+    box-shadow: var(--shadow-card);
+    border: 1px solid var(--card-border);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .interactive-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  .row-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .row-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-main);
+  }
+  .row-desc {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* HyperOS 原生开关 */
+  .miuix-switch {
+    width: 46px;
+    height: 27px;
+    background: #E2E8F0;
+    border-radius: 999px;
+    position: relative;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  body.theme-dark .miuix-switch {
+    background: #334155;
+  }
+  .switch-thumb {
+    position: absolute;
+    top: 2.5px;
+    left: 2.5px;
+    width: 22px;
+    height: 22px;
+    background: #FFFFFF;
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .miuix-switch.checked {
+    background: var(--accent);
+  }
+  .miuix-switch.checked .switch-thumb {
+    transform: translateX(19px);
+  }
+
+  .badge-action-btn {
+    appearance: none;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
+    color: var(--accent);
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: inherit;
+    padding: 5px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .badge-action-btn:hover {
+    background: var(--accent);
+    color: #FFFFFF;
+  }
+
+  /* ──────────────── 5. 工控终端日志卡片 ──────────────── */
+  .terminal-card {
+    background: var(--terminal-bg);
+    border-radius: 20px;
+    padding: 12px 14px 14px;
+    border: 1px solid var(--terminal-border);
+    box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.3);
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .terminal-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--terminal-border);
+    padding-bottom: 7px;
+  }
+  .terminal-title {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #94A3B8;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+  }
+  .live-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+  }
+  .term-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .term-btn {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    color: #94A3B8;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: all 0.15s;
+  }
+  .term-btn:hover {
+    color: #FFFFFF;
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .terminal-screen {
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1.55;
+    color: #CBD5E1;
+    max-height: 155px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    word-break: normal;
+    overflow-wrap: anywhere;
+    padding-top: 3px;
+  }
+  .terminal-screen::-webkit-scrollbar { width: 3px; }
+  .terminal-screen::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 2px; }
+
+  /* 日志色彩高亮 */
+  .log-row { margin-bottom: 2px; }
+  .log-time { color: #64748B; margin-right: 4px; }
+  .tag-info { color: #60A5FA; font-weight: 600; }
+  .tag-ok   { color: #34D399; font-weight: 600; }
+  .tag-step { color: #FBBF24; font-weight: 600; }
+  .tag-warn { color: #F59E0B; font-weight: 600; }
+  .tag-err  { color: #F87171; font-weight: 600; }
+  .tag-succ { color: #34D399; font-weight: 700; }
+
+  /* 底部虚拟横杠 */
+  .home-indicator {
+    width: 120px;
+    height: 4px;
+    background: var(--text-main);
+    opacity: 0.2;
+    border-radius: 2px;
+    margin: 8px auto 6px;
+    flex-shrink: 0;
+  }
+
+  /* ──────────────── 仿真弹窗 (激活卡密) ──────────────── */
+  .modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    z-index: 100;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .modal-backdrop.open {
+    display: flex;
+  }
+  .miuix-dialog {
+    width: 100%;
+    background: var(--card);
+    border-radius: 26px;
+    padding: 22px 20px 18px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--card-border);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    animation: dialogPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes dialogPop {
+    from { transform: scale(0.92); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+  .dialog-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text-main);
+    text-align: center;
+  }
+  .dialog-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+    line-height: 1.4;
+  }
+  .dialog-input {
+    width: 100%;
+    height: 44px;
+    border-radius: 12px;
+    border: 1px solid var(--card-border);
+    background: var(--card-sub);
+    padding: 0 12px;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-main);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .dialog-input:focus {
+    border-color: var(--accent);
+  }
+  .dialog-actions {
+    display: flex;
+    gap: 10px;
+  }
+  .dialog-btn {
+    flex: 1;
+    height: 40px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 0;
+    transition: all 0.15s;
+  }
+  .dialog-btn.cancel {
+    background: var(--card-sub);
+    color: var(--text-muted);
+  }
+  .dialog-btn.confirm {
+    background: var(--accent);
+    color: #FFFFFF;
+  }
+</style>
+</head>
+<body>
+
+  <div class="preview-controller">
+    <div class="controller-row">
+      <div class="controller-label">状态走查</div>
+      <button class="theme-toggle-btn" id="theme-toggle">
+        <span id="theme-icon">🌙</span>
+        <span id="theme-text">深色模式</span>
+      </button>
+    </div>
+    <div class="controller-buttons" id="control-bar">
+      <button class="controller-btn active" data-state="ready">1. 就绪</button>
+      <button class="controller-btn" data-state="running">2. 执行中</button>
+      <button class="controller-btn" data-state="success">3. 成功</button>
+      <button class="controller-btn" data-state="failed">4. 失败</button>
+      <button class="controller-btn" data-state="unsupported">5. 不支持</button>
+      <button class="controller-btn" data-state="missing">6. 缺偏移</button>
+      <button class="controller-btn" data-state="unlicensed">7. 待激活</button>
+    </div>
+  </div>
+  <div class="device-frame">
+    <div class="screen-viewport">
+      
+      <!-- 状态栏 -->
+      <div class="status-bar">
+        <span id="sys-clock">09:41</span>
+        <div class="camera-notch"></div>
+        <div class="status-icons">
+          <span>5G</span>
+          <span>98%</span>
+        </div>
+      </div>
+
+      <!-- App 顶部导航 (HyperOS 风格) -->
+      <header class="app-header">
+        <div class="header-brand">
+          <span class="brand-title">GhostLock</span>
+          <span class="brand-badge">PRO · 1.1</span>
+        </div>
+        <div class="header-actions">
+          <div class="icon-btn" title="关于与帮助" id="btn-about">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="16" x2="12" y2="12"></line>
+              <line x1="12" y1="8" x2="12.01" y2="8"></line>
+            </svg>
+          </div>
+        </div>
+      </header>
+
+      <!-- 主要内容堆叠 -->
+      <main class="content-stack">
+        
+        <!-- 1. Hero 状态综合卡片 -->
+        <section class="hero-card">
+          <div class="hero-status-row">
+            <div class="status-avatar" id="status-avatar">
+              <div class="status-avatar-ring"></div>
+              <div id="shield-icon"></div>
+            </div>
+            <div class="status-texts">
+              <span class="status-badge" id="state-badge">
+                <span id="badge-text">已适配</span>
+              </span>
+              <h2 class="status-headline" id="state-title">设备已匹配且就绪</h2>
+              <p class="status-caption" id="state-desc">内核版本在白名单中，环境校验完全通过</p>
+            </div>
+          </div>
+
+          <!-- 嵌入式规格详情 -->
+          <div class="specs-panel">
+            <div class="spec-row">
+              <span class="spec-key">目标机型</span>
+              <span class="spec-val">vivo V2324A (X100 Pro)</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-key">处理器</span>
+              <span class="spec-val">Dimensity 9300 (MT6989)</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-key">内核构建</span>
+              <span class="spec-val highlight" id="spec-kernel" title="6.1.145-android14-11-maybe-dirty">6.1.145-android14-11-maybe-dirty</span>
+            </div>
+            <div class="spec-row">
+              <span class="spec-key">偏移数据</span>
+              <span class="spec-val" id="spec-offsets">offsets.glt (940 B · 3组)</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. 商业化·设备授权与卡密管理卡片 -->
+        <section class="license-card">
+          <div class="license-top">
+            <div class="card-sec-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+              <span>设备授权鉴权</span>
+            </div>
+            <span class="license-pill ok" id="license-pill">
+              <span id="license-pill-dot">●</span>
+              <span id="license-pill-text">已永久激活</span>
+            </span>
+          </div>
+
+          <div class="device-id-box">
+            <div class="id-label">
+              <span>一机一码识别标识 (Widevine DRM)</span>
+              <span class="id-val" id="device-id-val">WV-61A4-8E92-3B01</span>
+            </div>
+            <button class="id-copy-btn" id="btn-copy-id" title="点击复制识别码发给客服">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              <span>复制</span>
+            </button>
+          </div>
+
+          <div class="license-action-row">
+            <span id="license-meta-desc">绑定本设备硬件证书，数据私有加密</span>
+            <button class="activate-text-btn" id="btn-open-activate">
+              <span>激活卡密</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="9 18 15 12 9 6"></polyline>
+              </svg>
+            </button>
+          </div>
+        </section>
+
+        <!-- 3. 主操作按钮 -->
+        <div class="action-block">
+          <button class="main-button" id="action-btn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+            <span id="btn-text">立即获取 Root 权限</span>
+          </button>
+        </div>
+
+        <!-- 4. 参数与维护卡片 -->
+        <section class="section-card">
+          <div class="card-sec-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+            <span>参数配置与维护</span>
+          </div>
+          
+          <!-- 安全模式开关 -->
+          <div class="interactive-row">
+            <div class="row-meta">
+              <div class="row-title">安全隔离模式</div>
+              <div class="row-desc">启动时自动禁用外部冲突模块，保证竞速成功率</div>
+            </div>
+            <div class="miuix-switch" id="safe-switch" role="switch" aria-checked="false">
+              <div class="switch-thumb"></div>
+            </div>
+          </div>
+
+          <div style="height: 1px; background: var(--card-divider); margin: 1px 0;"></div>
+
+          <!-- 偏移包管理 -->
+          <div class="interactive-row">
+            <div class="row-meta">
+              <div class="row-title">偏移数据包</div>
+              <div class="row-desc" id="pack-status-desc">内置加密数据容器 (GLT1 格式，无明文泄露)</div>
+            </div>
+            <button class="badge-action-btn" id="btn-import">导入包</button>
+          </div>
+        </section>
+
+        <!-- 5. 实时工控日志终端 -->
+        <section class="terminal-card">
+          <div class="terminal-top">
+            <div class="terminal-title">
+              <span class="live-dot" id="term-dot"></span>
+              <span>CONSOLE MONITOR</span>
+            </div>
+            <div class="term-actions">
+              <button class="term-btn" id="btn-clear-log">清屏</button>
+              <button class="term-btn" id="btn-copy">复制日志</button>
+            </div>
+          </div>
+          <div class="terminal-screen" id="term-output">
+            <!-- 实时日志注入 -->
+          </div>
+        </section>
+
+      </main>
+
+      <!-- 底部手势横条 -->
+      <div class="home-indicator"></div>
+
+      <!-- 模态弹窗：卡密激活 -->
+      <div class="modal-backdrop" id="modal-activate">
+        <div class="miuix-dialog">
+          <div class="dialog-title">输入卡密激活</div>
+          <div class="dialog-desc">请输入 16 位卡密激活本设备专属凭证，一机一码终身绑定</div>
+          <input type="text" class="dialog-input" id="input-card-key" placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="19">
+          <div class="dialog-actions">
+            <button class="dialog-btn cancel" id="btn-cancel-activate">取消</button>
+            <button class="dialog-btn confirm" id="btn-confirm-activate">立即激活</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // 时间刷新
+    function updateClock() {
+      const now = new Date();
+      const h = String(now.getHours()).padStart(2, '0');
+      const m = String(now.getMinutes()).padStart(2, '0');
+      document.getElementById('sys-clock').textContent = `${h}:${m}`;
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+
+    // 主题切换
+    const themeBtn = document.getElementById('theme-toggle');
+    const themeIcon = document.getElementById('theme-icon');
+    const themeText = document.getElementById('theme-text');
+    themeBtn.addEventListener('click', () => {
+      document.body.classList.toggle('theme-dark');
+      const isDark = document.body.classList.contains('theme-dark');
+      themeIcon.textContent = isDark ? '🌞' : '🌙';
+      themeText.textContent = isDark ? '浅色模式' : '深色模式';
+    });
+
+    // 安全模式开关
+    const safeSwitch = document.getElementById('safe-switch');
+    safeSwitch.addEventListener('click', () => {
+      safeSwitch.classList.toggle('checked');
+    });
+
+    // 复制设备 ID
+    const copyIdBtn = document.getElementById('btn-copy-id');
+    copyIdBtn.addEventListener('click', () => {
+      const val = document.getElementById('device-id-val').textContent;
+      navigator.clipboard?.writeText(val);
+      const originText = copyIdBtn.querySelector('span').textContent;
+      copyIdBtn.querySelector('span').textContent = '已复制!';
+      setTimeout(() => { copyIdBtn.querySelector('span').textContent = originText; }, 1500);
+    });
+
+    // 卡密弹窗交互
+    const modalActivate = document.getElementById('modal-activate');
+    const btnOpenActivate = document.getElementById('btn-open-activate');
+    const btnCancelActivate = document.getElementById('btn-cancel-activate');
+    const btnConfirmActivate = document.getElementById('btn-confirm-activate');
+    const inputCardKey = document.getElementById('input-card-key');
+
+    btnOpenActivate.addEventListener('click', () => {
+      modalActivate.classList.add('open');
+      inputCardKey.value = '';
+      inputCardKey.focus();
+    });
+    btnCancelActivate.addEventListener('click', () => {
+      modalActivate.classList.remove('open');
+    });
+    btnConfirmActivate.addEventListener('click', () => {
+      if (inputCardKey.value.trim().length >= 8) {
+        modalActivate.classList.remove('open');
+        applyState('ready');
+        alert('卡密验证通过！已与本设备完成专属硬件绑定。');
+      } else {
+        alert('请输入有效的卡密！');
+      }
+    });
+
+    // 图标库
+    const ICONS = {
+      shieldCheck: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><polyline points="9 12 11 14 15 10"></polyline></svg>`,
+      shieldAlert: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>`,
+      shieldCross: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>`,
+      spinner: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 1s linear infinite;"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>`
+    };
+
+    // 状态配置元数据
+    const UI_STATES = {
+      ready: {
+        icon: ICONS.shieldCheck,
+        iconBg: 'var(--green-soft)',
+        iconColor: 'var(--green)',
+        badgeText: '已适配',
+        badgeBg: 'var(--green-soft)',
+        badgeColor: 'var(--green)',
+        headline: '设备已匹配且就绪',
+        caption: '内核版本在白名单中，环境校验完全通过',
+        kernelHighlight: 'var(--accent)',
+        offsetsText: 'offsets.glt (940 B · 3组)',
+        btnText: '立即获取 Root 权限',
+        btnState: 'normal',
+        termDot: 'var(--green)',
+        licensePill: { text: '已永久激活', cls: 'ok' },
+        logs: [
+          { time: '10:14:02', tag: 'INFO', text: '探测环境: vivo V2324A (Dimensity 9300)' },
+          { time: '10:14:02', tag: 'OK', text: '内核匹配: 6.1.145-android14-11-maybe-dirty' },
+          { time: '10:14:02', tag: 'OK', text: '偏移表挂载完成: 30 项内核符号对账 (S1 闸门 PASS)' },
+          { time: '10:14:03', tag: 'INFO', text: '系统调度: 锁定最高频核心对 (4, 5 · 3.35 GHz)' },
+          { time: '10:14:03', tag: 'INFO', text: '授权就绪: DRM 硬件指纹解密验证通过' },
+          { time: '10:14:03', tag: 'INFO', text: '等待用户触发提权流程...' }
+        ]
+      },
+      running: {
+        icon: ICONS.spinner,
+        iconBg: 'var(--amber-soft)',
+        iconColor: 'var(--amber)',
+        badgeText: '正在执行',
+        badgeBg: 'var(--amber-soft)',
+        badgeColor: 'var(--amber)',
+        headline: '正在提权...',
+        caption: '核心竞速中，请保持屏幕常亮且切勿切换应用',
+        kernelHighlight: 'var(--amber)',
+        offsetsText: 'offsets.glt (正在读取...)',
+        btnText: '提权进行中 (请稍候)...',
+        btnState: 'busy',
+        termDot: 'var(--amber)',
+        licensePill: { text: '会话运行中', cls: 'ok' },
+        logs: [
+          { time: '10:15:30', tag: 'STEP', text: '初始化 futex PI 原语，内存预喷射完成 (Order-3)' },
+          { time: '10:15:31', tag: 'STEP', text: '阶段 1/4: 将 SELinux 状态修改为 permissive' },
+          { time: '10:15:31', tag: 'OK', text: 'SELinux 绕过成功: enforcing=0' },
+          { time: '10:15:32', tag: 'STEP', text: '阶段 2/4: 中和 vivo vr.ko 防御模块' },
+          { time: '10:15:32', tag: 'INFO', text: '多播路由触发中: attempts=15 arm=3...' },
+          { time: '10:15:33', tag: 'WARN', text: '等待消费者线程与锁重平衡竞速命中...' }
+        ]
+      },
+      success: {
+        icon: ICONS.shieldCheck,
+        iconBg: 'var(--green-soft)',
+        iconColor: 'var(--green)',
+        badgeText: '提权成功',
+        badgeBg: 'var(--green-soft)',
+        badgeColor: 'var(--green)',
+        headline: 'Root 权限已就绪',
+        caption: 'KernelSU 守护进程已成功拉起，权限管理器已连接',
+        kernelHighlight: 'var(--green)',
+        offsetsText: 'offsets.glt (已完成会话)',
+        btnText: '已成功提权 (可重新执行)',
+        btnState: 'normal',
+        termDot: 'var(--green)',
+        licensePill: { text: '已永久激活', cls: 'ok' },
+        logs: [
+          { time: '10:15:33', tag: 'OK', text: '多播路由竞速命中: seq=16 (errno=0, step=0)' },
+          { time: '10:15:33', tag: 'OK', text: 'vr.ko 探针中和完成: sys_exit funcs 清零' },
+          { time: '10:15:34', tag: 'STEP', text: '阶段 3/4: task->cred 切换至 init_cred' },
+          { time: '10:15:34', tag: 'OK', text: 'Root 凭据注入完成' },
+          { time: '10:15:34', tag: 'STEP', text: '阶段 4/4: TIF_SECCOMP 限制清空' },
+          { time: '10:15:35', tag: 'SUCC', text: 'Exploit 执行完毕 (exit code=0)' },
+          { time: '10:15:35', tag: 'SUCC', text: 'KernelSU daemon ready. 权限节点建立完成。' }
+        ]
+      },
+      failed: {
+        icon: ICONS.shieldCross,
+        iconBg: 'var(--red-soft)',
+        iconColor: 'var(--red)',
+        badgeText: '执行失败',
+        badgeBg: 'var(--red-soft)',
+        badgeColor: 'var(--red)',
+        headline: '提权未能完成',
+        caption: 'vr.ko 防御拦截中断或时序竞争超时，请直接重试',
+        kernelHighlight: 'var(--red)',
+        offsetsText: 'offsets.glt (校验正常)',
+        btnText: '重试提权流程',
+        btnState: 'normal',
+        termDot: 'var(--red)',
+        licensePill: { text: '已永久激活', cls: 'ok' },
+        logs: [
+          { time: '10:16:01', tag: 'STEP', text: '阶段 1/4: SELinux 修改完成' },
+          { time: '10:16:02', tag: 'STEP', text: '阶段 2/4: 中和 vr.ko 模块...' },
+          { time: '10:16:05', tag: 'WARN', text: '重试第 5 次后多播路由竞速仍未命中' },
+          { time: '10:16:05', tag: 'ERR', text: 'vr.ko neutralize route failed (5 attempts)' },
+          { time: '10:16:05', tag: 'ERR', text: '提权中止 (exit code=139)，系统状态已自动复原' }
+        ]
+      },
+      unsupported: {
+        icon: ICONS.shieldAlert,
+        iconBg: 'var(--amber-soft)',
+        iconColor: 'var(--amber)',
+        badgeText: '不支持',
+        badgeBg: 'var(--amber-soft)',
+        badgeColor: 'var(--amber)',
+        headline: '内核版本未适配',
+        caption: '当前设备内核未包含在支持列表中，无法进行提权',
+        kernelHighlight: 'var(--red)',
+        offsetsText: '无匹配项',
+        btnText: '内核不支持提权',
+        btnState: 'disabled',
+        termDot: 'var(--amber)',
+        licensePill: { text: '已授权', cls: 'ok' },
+        logs: [
+          { time: '10:10:00', tag: 'INFO', text: '环境探针: 探测到内核版本 6.6.21-android15' },
+          { time: '10:10:00', tag: 'ERR', text: '白名单校验失败: 仅支持 6.1 系列指定版本' },
+          { time: '10:10:00', tag: 'WARN', text: '安全机制: 阻止非受支持内核执行 exploit' }
+        ]
+      },
+      missing: {
+        icon: ICONS.shieldAlert,
+        iconBg: 'var(--amber-soft)',
+        iconColor: 'var(--amber)',
+        badgeText: '缺数据',
+        badgeBg: 'var(--amber-soft)',
+        badgeColor: 'var(--amber)',
+        headline: '缺少偏移数据包',
+        caption: '请先导入 offsets.glt 数据容器文件',
+        kernelHighlight: 'var(--amber)',
+        offsetsText: '未加载',
+        btnText: '请先导入偏移包',
+        btnState: 'disabled',
+        termDot: 'var(--amber)',
+        licensePill: { text: '已授权', cls: 'ok' },
+        logs: [
+          { time: '10:12:00', tag: 'INFO', text: '检查内置容器: filesDir/offsets.glt 不存在' },
+          { time: '10:12:00', tag: 'WARN', text: '缺少内核符号表，无法计算偏移' },
+          { time: '10:12:00', tag: 'INFO', text: '请点击下方“导入包”导入合法数据容器' }
+        ]
+      },
+      unlicensed: {
+        icon: ICONS.shieldAlert,
+        iconBg: 'var(--amber-soft)',
+        iconColor: 'var(--amber)',
+        badgeText: '待激活',
+        badgeBg: 'var(--amber-soft)',
+        badgeColor: 'var(--amber)',
+        headline: '设备未授权',
+        caption: '请复制上方识别码联系管理员，或输入卡密激活',
+        kernelHighlight: 'var(--text-light)',
+        offsetsText: 'offsets.glt (已加密锁定)',
+        btnText: '请先激活设备授权',
+        btnState: 'disabled',
+        termDot: 'var(--amber)',
+        licensePill: { text: '待激活卡密', cls: 'pending' },
+        logs: [
+          { time: '10:13:00', tag: 'INFO', text: '设备识别码: WV-61A4-8E92-3B01' },
+          { time: '10:13:00', tag: 'WARN', text: '本地鉴权状态: 未查询到已绑定的激活凭据' },
+          { time: '10:13:00', tag: 'INFO', text: '提示: 点击“激活卡密”完成授权即可解密偏移表' }
+        ]
+      }
+    };
+
+    function applyState(stateKey) {
+      const s = UI_STATES[stateKey];
+      if (!s) return;
+
+      const avatar = document.getElementById('status-avatar');
+      avatar.style.background = s.iconBg;
+      avatar.style.color = s.iconColor;
+      document.getElementById('shield-icon').innerHTML = s.icon;
+
+      const badge = document.getElementById('state-badge');
+      badge.style.background = s.badgeBg;
+      badge.style.color = s.badgeColor;
+      document.getElementById('badge-text').textContent = s.badgeText;
+
+      document.getElementById('state-title').textContent = s.headline;
+      document.getElementById('state-desc').textContent = s.caption;
+
+      const specKernel = document.getElementById('spec-kernel');
+      specKernel.style.color = s.kernelHighlight;
+      document.getElementById('spec-offsets').textContent = s.offsetsText;
+
+      const actionBtn = document.getElementById('action-btn');
+      actionBtn.setAttribute('data-state', s.btnState);
+      document.getElementById('btn-text').textContent = s.btnText;
+
+      document.getElementById('term-dot').style.background = s.termDot;
+      document.getElementById('term-dot').style.boxShadow = `0 0 8px ${s.termDot}`;
+
+      // 授权状态
+      const pill = document.getElementById('license-pill');
+      pill.className = `license-pill ${s.licensePill.cls}`;
+      document.getElementById('license-pill-text').textContent = s.licensePill.text;
+
+      // 日志渲染
+      const screen = document.getElementById('term-output');
+      screen.innerHTML = s.logs.map(log => {
+        let tagClass = 'tag-info';
+        if (log.tag === 'OK') tagClass = 'tag-ok';
+        else if (log.tag === 'STEP') tagClass = 'tag-step';
+        else if (log.tag === 'WARN') tagClass = 'tag-warn';
+        else if (log.tag === 'ERR') tagClass = 'tag-err';
+        else if (log.tag === 'SUCC') tagClass = 'tag-succ';
+
+        return `<div class="log-row">
+          <span class="log-time">${log.time}</span>
+          <span class="${tagClass}">[${log.tag}]</span>
+          <span>${log.text}</span>
+        </div>`;
+      }).join('');
+      screen.scrollTop = screen.scrollHeight;
+    }
+
+    // 绑定控制器按钮
+    const controlBar = document.getElementById('control-bar');
+    controlBar.querySelectorAll('.controller-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        controlBar.querySelectorAll('.controller-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        applyState(btn.dataset.state);
+      });
+    });
+
+    // 清屏与复制日志
+    document.getElementById('btn-clear-log').addEventListener('click', () => {
+      document.getElementById('term-output').innerHTML = '<div class="log-row" style="color: #64748B;">[日志已清空]</div>';
+    });
+    document.getElementById('btn-copy').addEventListener('click', () => {
+      const text = document.getElementById('term-output').innerText;
+      navigator.clipboard?.writeText(text);
+      const btn = document.getElementById('btn-copy');
+      btn.textContent = '已复制!';
+      setTimeout(() => { btn.textContent = '复制日志'; }, 1500);
+    });
+
+    // 默认应用 ready 状态
+    applyState('ready');
+  </script>
+</body>
+</html>

@@ -1,0 +1,157 @@
+name: build-apk
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore: ["**.md", "server/**", "tools/**", "docs/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "APK type"
+        required: true
+        default: "release"
+        type: choice
+        options: [release, debug]
+      license_base_url:
+        description: "license base URL (empty = use repo variable)"
+        required: false
+        default: ""
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ONDK_VERSION: "r30.1"
+  GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8"
+
+jobs:
+  apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache ONDK
+        id: ondk-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ondk
+          key: ondk-${{ env.ONDK_VERSION }}-linux
+
+      - name: Download ONDK toolchain
+        if: steps.ondk-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          url="https://github.com/topjohnwu/ondk/releases/download/${ONDK_VERSION}/ondk-${ONDK_VERSION}-linux.tar.xz"
+          mkdir -p "${{ runner.temp }}/ondk"
+          curl -fL "$url" -o "${{ runner.temp }}/ondk.tar.xz"
+          tar -C "${{ runner.temp }}/ondk" --strip-components=1 -xf "${{ runner.temp }}/ondk.tar.xz"
+          "${{ runner.temp }}/ondk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang" --version
+
+      - name: Build native engine
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_HOME="${{ runner.temp }}/ondk"
+          export NDK_ROOT="$ANDROID_NDK_HOME"
+          make ghostlock API=35
+          ls -l ghostlock
+          file ghostlock
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve license URL
+        id: license
+        run: |
+          set -euo pipefail
+          url="${{ inputs.license_base_url }}"
+          [ -z "$url" ] && url="${{ vars.LICENSE_BASE_URL }}"
+          [ -z "$url" ] && url="${{ secrets.LICENSE_BASE_URL }}"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          if [ -z "$url" ]; then
+            echo "::warning::LICENSE_BASE_URL is empty: the APK will refuse to activate (fail-closed by design)"
+          fi
+
+      - name: Decode signing key (release only)
+        id: signing
+        if: inputs.build_type != 'debug'
+        run: |
+          set -euo pipefail
+          if [ -n "${{ secrets.SIGNING_KEY_BASE64 }}" ]; then
+            echo "${{ secrets.SIGNING_KEY_BASE64 }}" | base64 -d > "$RUNNER_TEMP/keystore.jks"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::will produce a SIGNED release APK"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::SIGNING_KEY_BASE64 missing -> unsigned release APK"
+          fi
+
+      - name: Build
+        env:
+          ANDROID_NDK_HOME: ${{ runner.temp }}/ondk
+          NDK_ROOT: ${{ runner.temp }}/ondk
+          LICENSE_BASE_URL: ${{ steps.license.outputs.url }}
+          APP_VER: "1.1"
+          KEYSTORE_PATH: ${{ steps.signing.outputs.enabled == 'true' && format('{0}/keystore.jks', runner.temp) || '' }}
+          KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          if [ "${{ inputs.build_type }}" = "debug" ]; then
+            ./gradlew :app:assembleDebug --no-daemon --stacktrace
+            APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          elif [ -n "${{ secrets.SIGNING_KEY_BASE64 }}" ]; then
+            ./gradlew :app:assembleRelease --no-daemon --stacktrace
+            APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          else
+            ./gradlew :app:assembleRelease --no-daemon --stacktrace
+            APK=$(ls app/build/outputs/apk/release/*-unsigned*.apk | head -1)
+            [ -n "$APK" ] || APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
+          fi
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+          echo "::notice::artifact $APK ($(stat -c%s "$APK") bytes)"
+
+      - name: Verify APK
+        run: |
+          set -euo pipefail
+          echo "== basics =="
+          ls -l "$APK_PATH"
+          unzip -l "$APK_PATH" | grep -E "lib/arm64-v8a/libghostlock.so|assets/|classes.*dex" || true
+          echo "== plaintext offset symbols / license domain =="
+          if unzip -p "$APK_PATH" classes*.dex 2>/dev/null | strings | grep -qiE "task_seccomp|off_init_cred"; then
+            echo "::warning::plaintext offset symbols or license domain found in dex"
+          else
+            echo "::notice::no plaintext offset symbols / license domain in dex"
+          fi
+          echo "== signature =="
+          if [ -n "${{ secrets.SIGNING_KEY_BASE64 }}" ]; then
+            for BT in "${ANDROID_HOME}"/build-tools/*/; do
+              "$BT/apksigner" verify --print-certs "$APK_PATH" | head -4 && break
+            done
+          else
+            echo "(unsigned artifact, skipped)"
+          fi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: XproSU-${{ inputs.build_type || 'release' }}
+          path: ${{ env.APK_PATH }}
+          archive: false
+          if-no-files-found: error
