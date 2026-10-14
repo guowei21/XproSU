@@ -145,15 +145,16 @@ class LicenseRepository(
         val record = cached() ?: return@withContext null
         val api = client ?: return@withContext null
         try {
+            val card = CardKey.normalize(record.cardKey)
             val response = api.session(
-                card = record.cardKey.trim().uppercase(),
+                card = card,
                 deviceFpHex = deviceFpHex,
                 pubKeyHex = DeviceFingerprint.hex(deviceKey.publicKey()),
             )
             val blob = response.bytes(GlBlob.T_BLOB) ?: return@withContext null
             val wrapped = response.bytes(GlBlob.T_WRAPPED) ?: return@withContext null
             val kd = try {
-                deviceKey.unwrap(wrapped, record.cardKey.trim().uppercase())
+                deviceKey.unwrap(wrapped, card)
             } catch (_: Exception) {
                 return@withContext null
             }
@@ -205,7 +206,7 @@ class LicenseRepository(
      */
     fun cardTagHex(): String? {
         // 本地记录与摘要都只认归一化（trim + uppercase）后的卡密，与服务端一致。
-        val key = cached()?.cardKey?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: return null
+        val key = cached()?.cardKey?.let(CardKey::normalize)?.takeIf { it.isNotEmpty() } ?: return null
         val digest = MessageDigest.getInstance("SHA-256")
             .digest(key.toByteArray(Charsets.UTF_8))
         return DeviceFingerprint.hex(digest.copyOfRange(0, CARD_TAG_SIZE))
@@ -228,7 +229,9 @@ class LicenseRepository(
 
     /** 用卡密激活本机，并取回本机专属载荷。 */
     suspend fun activate(cardKey: String): ActivationResult = withContext(Dispatchers.IO) {
-        val key = cardKey.trim().uppercase()
+        // 输入可能被输入法改坏（全角/零宽/连字符变体）——统一清洗成规范形式，
+        // 与服务端 store.py:clean_card_key 完全一致。
+        val key = CardKey.normalize(cardKey)
         if (key.isEmpty()) {
             return@withContext ActivationResult.Rejected(-1, appContext.getString(R.string.license_card_empty))
         }

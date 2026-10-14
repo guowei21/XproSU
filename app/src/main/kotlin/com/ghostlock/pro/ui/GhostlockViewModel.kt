@@ -11,6 +11,7 @@ import com.ghostlock.pro.domain.usecase.FormatLogUseCase
 import com.ghostlock.pro.domain.usecase.LoadKernelSnapshotUseCase
 import com.ghostlock.pro.domain.usecase.RunExploitUseCase
 import com.ghostlock.pro.license.ActivationResult
+import com.ghostlock.pro.license.CardKey
 import com.ghostlock.pro.license.LicenseRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -220,7 +221,7 @@ class GhostlockViewModel(
     fun onDialogConfirm(value: String) {
         if (state.value.dialogType != DialogType.INPUT) return
         if (state.value.activating) return
-        val key = value.trim()
+        val key = CardKey.normalize(value)
         if (key.isEmpty()) {
             send(GhostlockEffect.Toast(R.string.license_card_empty))
             return

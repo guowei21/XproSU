@@ -1,4 +1,4 @@
-"""SQLite card/token store for the XproSU licensing service.
+"""SQLite card/token store for the GhostLock licensing service.
 
 Standalone (no U验证 upstream).  Card keys are never stored: only
 ``card_hash = SHA-256(card_key).hex()`` is persisted.  Card plaintext format:
@@ -20,6 +20,8 @@ import base64
 import secrets
 import sqlite3
 import time
+import unicodedata
+
 from crypto import sha256
 
 CARD_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
@@ -92,11 +94,54 @@ STATE_REVOKED = "revoked"
 DEAD_STATES = (STATE_DISABLED, STATE_REVOKED)
 
 
-def normalize_card_key(card: str) -> str:
-    """Upper-case and strip surrounding whitespace; keep the internal dashes."""
+# ── 卡密清洗 ────────────────────────────────────────────────────────────
+#
+# 用户输入的卡密经常「看起来一样但不是同一个串」：输入法全角（Ａ 而不是 A）、
+# 从聊天窗口复制带进来的零宽字符、各种连字符变体（– — − －）、不间断空格……
+# 它们都会让 SHA-256 完全不同，于是卡明明有效却报「卡密无效」。
+#
+# 关键性质：**对已经规范的卡密是幂等的**。库里老卡存的是 sha256(规范串)，
+# 清洗后仍然得到同一个串，所以历史卡密一个都不会失效。
+#
+# 客户端 app/.../license/CardKey.kt 必须实现**逐字节一致**的同一套规则：
+# card_tag 由两端各自计算，任一侧不一致引擎就会拒绝容器。
+_ZERO_WIDTH = frozenset((0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x00AD, 0x180E))
+_DASH_LIKE = (
+    "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\u2043"
+    "\ufe58\ufe63\uff0d\u2500\u2501\u2e3a\u2e3b"
+)
+_CARD_ALPHABET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+
+
+def clean_card_key(card: str) -> str:
+    """把「看起来像同一张卡」的输入归一成同一个串。
+
+    顺序：NFKC（全角→半角）→ 丢零宽 → 丢空白 → 连字符统一 → 大写 →
+    必要时补横杠分组。对规范卡密是幂等的。
+    """
     if not isinstance(card, str):
         raise ValueError("card must be a string")
-    return card.strip().upper()
+    s = unicodedata.normalize("NFKC", card)
+    out = []
+    for ch in s:
+        if ord(ch) in _ZERO_WIDTH:
+            continue
+        if ch.isspace():
+            continue
+        if ch in _DASH_LIKE:
+            out.append("-")
+            continue
+        out.append(ch)
+    s = "".join(out).upper()
+    # 用户整串漏打横杠时补回规范分组：20 位 Base32 → XXXXX-XXXXX-XXXXX-XXXXX
+    if len(s) == 20 and all(c in _CARD_ALPHABET for c in s):
+        s = "-".join(s[i:i + 5] for i in range(0, 20, 5))
+    return s
+
+
+def normalize_card_key(card: str) -> str:
+    """卡密的唯一规范形式：清洗后大写（见 [clean_card_key]）。"""
+    return clean_card_key(card)
 
 
 def card_hash(card_key: str) -> str:
