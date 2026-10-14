@@ -116,7 +116,6 @@ private fun GhostlockRoute(
             override fun onCloseExecutionSheet() = viewModel.onCloseExecutionSheet()
             override fun onCopyLogs() = viewModel.copyLogs()
             override fun onClearLogs() = viewModel.clearLogs()
-            override fun onCopyDeviceId() = viewModel.copyDeviceId()
             override fun onOpenActivateDialog() = viewModel.openActivateDialog()
             override fun onSafeModeChanged(enabled: Boolean) = viewModel.toggleSafeMode(enabled)
             override fun onCpuPairSelected(index: Int) = viewModel.onCpuPairSelected(index)
