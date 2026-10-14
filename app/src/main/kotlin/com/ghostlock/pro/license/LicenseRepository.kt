@@ -113,6 +113,9 @@ class LicenseRepository(
      */
     fun cachedDebugPayloadKey(): ByteArray? = if (debugBypass()) debugKey else null
 
+    /** 本地是否存有凭据（不联网、不代表可用）。 */
+    fun hasCredentials(): Boolean = cached() != null
+
     /**
      * 打开 App 时的在线核对：确认卡密仍然有效。
      *

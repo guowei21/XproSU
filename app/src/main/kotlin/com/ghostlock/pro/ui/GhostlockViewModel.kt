@@ -121,7 +121,7 @@ class GhostlockViewModel(
             try {
                 if (!license.checkExpiry()) {
                     appendLog("result: license expired")
-                    send(GhostlockEffect.LicenseExpired)
+                    onLicenseRevoked()
                     return@launch
                 }
                 // 每次点击「立即获取 Root」都向服务端换一次解密材料：
@@ -129,7 +129,7 @@ class GhostlockViewModel(
                 val session = license.fetchSessionKey()
                 if (session == null && !license.debugSessionAllowed()) {
                     appendLog("result: license check failed (network or server refused)")
-                    send(GhostlockEffect.LicenseExpired)
+                    onLicenseRevoked()
                     return@launch
                 }
                 val code = runExploitUseCase(repository.selectedCpuPair(), ::appendLog, session)
@@ -140,6 +140,11 @@ class GhostlockViewModel(
                         lastRunFailed = code != 0,
                         progress = if (code == 0) 100 else it.progress,
                     )
+                }
+                if (code != 0) {
+                    // 竞速窗口没跑到完成（典型：卡在 W1/锁核后的内核写入）：
+                    // 这类失败用户无法自救，明确提示降级。
+                    send(GhostlockEffect.Toast(R.string.run_unsupported_version))
                 }
             } finally {
                 endOperation()
@@ -161,10 +166,7 @@ class GhostlockViewModel(
 
     fun clearLogs() = mutableState.update { it.copy(logLines = emptyList()) }
 
-    fun copyDeviceId() {
-        send(GhostlockEffect.Clipboard(state.value.deviceId))
-        send(GhostlockEffect.Toast(R.string.copied_device_id))
-    }
+    // 识别码不再对外展示，复制动作随之移除；保留 action 空实现兼容动作层。
 
     /**
      * 到期检查入口：到期即收回并发出 [GhostlockEffect.LicenseExpired]。
@@ -172,16 +174,32 @@ class GhostlockViewModel(
      */
     suspend fun checkLicenseNow(): Boolean {
         if (!license.checkExpiry()) {
-            mutableState.update {
-                it.copy(
-                    isLicensed = false,
-                    licenseExpiry = "",
-                )
-            }
-            send(GhostlockEffect.LicenseExpired)
+            onLicenseRevoked()
             return false
         }
         return true
+    }
+
+    /** 授权被收回：同步 UI 到未激活态，并弹一次激活框。 */
+    fun onLicenseRevoked() {
+        mutableState.update {
+            it.copy(isLicensed = false, licenseExpiry = "")
+        }
+        openActivateDialog()
+    }
+
+    /** 本地凭据是否有效（不联网）。 */
+    fun isActivated(): Boolean = license.isActivated()
+
+    /**
+     * 回前台时的在线核对：删卡/封卡/过期立刻生效。
+     * 服务端明确拒绝或网络不可达 → 清凭据并回到未激活态。
+     */
+    suspend fun verifyOnResume() {
+        if (license.hasCredentials() && !license.verifyOnline()) {
+            license.clear()
+            onLicenseRevoked()
+        }
     }
 
     fun openActivateDialog() {
@@ -270,7 +288,10 @@ class GhostlockViewModel(
                         licenseExpiry = if (activated) it.licenseExpiry else "",
                     )
                 }
-                if (!activated) send(GhostlockEffect.LicenseExpired)
+                if (!activated) {
+                    mutableState.update { it.copy(licenseExpiry = "") }
+                    openActivateDialog()
+                }
                 continue
             }
             mutableState.update {

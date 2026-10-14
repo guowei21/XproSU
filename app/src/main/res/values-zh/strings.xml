@@ -65,4 +65,13 @@
     <string name="login_button">激活并进入</string>
     <string name="login_activating">正在校验…</string>
     <string name="login_enter">正在进入…</string>
+
+    <!-- 卡密有效期盒子 -->
+    <string name="license_expiry_title">卡密有效期</string>
+    <string name="license_permanent">永久授权</string>
+    <!-- 未激活时授权卡片的可点提示（合并后的单一控件） -->
+    <string name="action_tap_activate">请点击激活卡密</string>
+    <string name="action_reactivate">更换卡密</string>
+    <!-- 运行失败且当前版本不支持 -->
+    <string name="run_unsupported_version">当前版本不支持，请降级使用</string>
 </resources>

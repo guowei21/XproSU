@@ -24,8 +24,9 @@
             磁盘，那个路径上根本没有文件，提权直接失败。所以
             packaging.jniLibs.useLegacyPackaging 必须保持 true。
         -->
+        <!-- 主界面即入口：未激活时授权卡片上「激活卡密」是唯一入口。 -->
         <activity
-            android:name=".ui.LoginActivity"
+            android:name=".ui.MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|mnc|colorMode|density|fontScale|fontWeightAdjustment|keyboard|layoutDirection|locale|mcc|navigation|smallestScreenSize|touchscreen|uiMode"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
@@ -34,9 +35,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- 不对其它应用开放：没有授权时它自己会退回登录窗口。 -->
+        <!-- 登录窗口保留但不再是入口：卡密改在主界面授权卡片填写/更换。 -->
         <activity
-            android:name=".ui.MainActivity"
+            android:name=".ui.LoginActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|mnc|colorMode|density|fontScale|fontWeightAdjustment|keyboard|layoutDirection|locale|mcc|navigation|smallestScreenSize|touchscreen|uiMode"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />

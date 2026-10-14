@@ -94,6 +94,7 @@ data class GhostlockUiState(
     val licenseConfigured: Boolean = false,
     /** 服务端返回的到期时间原文，仅用于展示。 */
     val licenseExpiry: String = "",
+    val licensePermanent: Boolean = false,
     /** 正在向服务端校验卡密。 */
     val activating: Boolean = false,
     /** 提权进度 0..100，Release 交付版以此替代明文日志。 */
@@ -202,11 +203,10 @@ private fun PortraitContent(
         }
         item(key = "license") {
             LicenseCard(
-                deviceId = state.deviceId,
                 isLicensed = state.isLicensed,
                 configured = state.licenseConfigured,
                 expiry = state.licenseExpiry,
-                onCopyId = actions::onCopyDeviceId,
+                permanent = state.licensePermanent,
                 onActivateClick = actions::onOpenActivateDialog,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -273,11 +273,10 @@ private fun LandscapeContent(
                 modifier = Modifier.fillMaxWidth(),
             )
             LicenseCard(
-                deviceId = state.deviceId,
                 isLicensed = state.isLicensed,
                 configured = state.licenseConfigured,
                 expiry = state.licenseExpiry,
-                onCopyId = actions::onCopyDeviceId,
+                permanent = state.licensePermanent,
                 onActivateClick = actions::onOpenActivateDialog,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -491,11 +490,10 @@ private fun SpecRow(
  */
 @Composable
 private fun LicenseCard(
-    deviceId: String,
     isLicensed: Boolean,
     configured: Boolean,
     expiry: String,
-    onCopyId: () -> Unit,
+    permanent: Boolean,
     onActivateClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -509,11 +507,6 @@ private fun LicenseCard(
         if (isDark) Color(0xFF6EE7B7) else Color(0xFF059669)
     } else {
         if (isDark) Color(0xFFFDE68A) else Color(0xFFD97706)
-    }
-    val metaText = when {
-        !configured -> stringResource(R.string.license_not_configured)
-        isLicensed && expiry.isNotEmpty() -> stringResource(R.string.license_expiry_fmt, expiry)
-        else -> stringResource(R.string.license_meta_desc)
     }
 
     Card(
@@ -564,7 +557,8 @@ private fun LicenseCard(
                 }
             }
 
-            // Device ID Box
+            // 卡密有效期盒子：永久卡显示「永久授权」，限期卡显示到期时间。
+            // 原本机识别码不再对外展示（Widevine ID 只作为内部绑定凭据）。
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -576,53 +570,54 @@ private fun LicenseCard(
                         RoundedCornerShape(12.dp),
                     )
                     .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column {
                     Text(
-                        text = stringResource(R.string.license_device_id_desc),
+                        text = stringResource(R.string.license_expiry_title),
                         fontSize = 10.5.sp,
                         color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                     )
                     Text(
-                        text = deviceId.ifEmpty { "----" },
-                        fontSize = 11.sp,
-                        lineHeight = 14.sp,
-                        fontFamily = FontFamily.Monospace,
+                        text = if (isLicensed) {
+                            if (permanent) stringResource(R.string.license_permanent)
+                            else expiry.ifEmpty { "----" }
+                        } else {
+                            "----"
+                        },
+                        fontSize = 12.sp,
+                        lineHeight = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = MiuixTheme.colorScheme.onSurface,
                         modifier = Modifier.padding(top = 1.dp),
                     )
                 }
-
-                TextButton(
-                    text = stringResource(R.string.action_copy),
-                    onClick = onCopyId,
-                    colors = ButtonDefaults.textButtonColors(),
-                )
             }
 
+            // 单一授权控件：未激活 → 「请点击激活卡密」；已激活 → 「已激活」（点击换卡）。
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(pillBg)
+                    .clickable(onClick = onActivateClick)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = metaText,
-                    fontSize = 11.5.sp,
-                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.action_activate_key) + " >",
+                    text = if (isLicensed) stringResource(R.string.license_pill_ok)
+                    else stringResource(R.string.action_tap_activate),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = MiuixTheme.colorScheme.primary,
-                    modifier = Modifier.clickable(onClick = onActivateClick),
+                    color = pillColor,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = if (isLicensed) stringResource(R.string.action_reactivate) + " >"
+                    else stringResource(R.string.action_activate_key) + " >",
+                    fontSize = 11.sp,
+                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
             }
         }

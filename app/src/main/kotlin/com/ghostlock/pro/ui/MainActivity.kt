@@ -35,6 +35,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         viewModel.initialize()
+        // 主界面即入口：未激活时 UI 完全可用，激活入口在授权卡片的「激活卡密」。
+        // 未激活时直接弹一次激活框，减少一次点击。
+        if (!viewModel.isActivated()) {
+            viewModel.openActivateDialog()
+        }
         setContent {
             GhostlockRoute(viewModel, ::handleEffect)
         }
@@ -43,30 +48,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        val license = (application as GhostlockApplication).license
-        // 授权在别处被收回（服务端拒绝 / 清除数据 / 载荷被删）时退回登录窗口，
-        // 而不是停在一个已经解不开任何东西的主界面上。
-        if (!license.isActivated()) {
-            navigateToLogin()
-            return
-        }
-        // 回前台再做一次到期检查，覆盖「后台期间限期卡到期」的情况。
-        lifecycleScope.launch {
-            if (!license.checkExpiry()) {
-                navigateToLogin()
-                return@launch
-            }
-            // 每次打开都向服务端核对一次卡密状态：删卡/封卡/过期在下次打开时立刻生效。
-            // 网络不通或服务端拒绝都退回登录窗口（fail-closed）。
-            if (!license.verifyOnline()) {
-                navigateToLogin()
-            }
-        }
-    }
-
-    private fun navigateToLogin() {
-        startActivity(Intent(this, LoginActivity::class.java))
-        finish()
+        // 回前台时向服务端核对一次卡密状态（删卡/封卡/过期立刻生效）。
+        // 有本地凭据且核对失败才退回未激活态并弹激活框；离线时保持界面，
+        // 由 fetchSessionKey 的 fail-closed 兜底（没有 Kd 就提不了权）。
+        lifecycleScope.launch { viewModel.verifyOnResume() }
     }
 
     private fun handleEffect(effect: GhostlockEffect) {
@@ -84,7 +69,7 @@ class MainActivity : ComponentActivity() {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
 
-            GhostlockEffect.LicenseExpired -> navigateToLogin()
+            GhostlockEffect.LicenseExpired -> viewModel.onLicenseRevoked()
         }
     }
 

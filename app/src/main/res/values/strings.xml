@@ -65,4 +65,10 @@
     <string name="login_button">Activate and continue</string>
     <string name="login_activating">Verifying…</string>
     <string name="login_enter">Entering…</string>
+
+    <string name="license_expiry_title">License validity</string>
+    <string name="license_permanent">Permanent license</string>
+    <string name="action_tap_activate">Tap to activate</string>
+    <string name="action_reactivate">Change key</string>
+    <string name="run_unsupported_version">This version is not supported; please downgrade</string>
 </resources>
