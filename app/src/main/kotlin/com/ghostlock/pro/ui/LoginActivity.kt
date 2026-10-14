@@ -336,7 +336,7 @@ private fun LoginScreen(
         }
 
         Text(
-            text = "GhostLock",
+            text = "XproSU",
             fontSize = 11.sp,
             color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.35f),
         )

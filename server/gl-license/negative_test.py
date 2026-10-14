@@ -1,4 +1,4 @@
-"""Negative-path tests for GhostLock licensing server (zero dependencies).
+"""Negative-path tests for XproSU licensing server (zero dependencies).
 
 Run directly:
 
@@ -348,7 +348,7 @@ def test_heartbeat_disabled_state_zero(ctx, base):
 
 
 def main() -> int:
-    print("=== GhostLock license negative-path tests ===")
+    print("=== XproSU license negative-path tests ===")
     with tempfile.TemporaryDirectory(prefix="gl-neg-") as tmpdir:
         ctx = make_ctx(tmpdir)
         srv, thread, base = start_server(ctx)

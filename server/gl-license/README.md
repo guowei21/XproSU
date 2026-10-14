@@ -1,4 +1,4 @@
-# GhostLock 授权服务端（gl-license）
+# XproSU 授权服务端（gl-license）
 
 零第三方依赖的卡密授权 + 按设备加密载荷下发服务。只用 Python 3 标准库
 （`crypto.py` 里的 AES / ChaCha20-Poly1305 / HKDF / P-256 全部纯 Python 实现）。
@@ -130,7 +130,7 @@ python server.py .\config.json
 
 ```ini
 [Unit]
-Description=GhostLock license server
+Description=XproSU license server
 After=network.target
 
 [Service]

@@ -1,5 +1,5 @@
 #!/bin/sh
-# GhostLock 授权服务端备份：cards.db / config.json / payload.bin
+# XproSU 授权服务端备份：cards.db / config.json / payload.bin
 # cards.db 用 sqlite3 的在线备份 API（在容器里跑），避免拷贝到写了一半的库。
 set -e
 D=/opt/gl-license

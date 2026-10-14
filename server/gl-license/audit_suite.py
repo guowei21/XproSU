@@ -1,4 +1,4 @@
-"""Full security & completeness audit for GhostLock/XproSU licensing engine.
+"""Full security & completeness audit for XproSU/XproSU licensing engine.
 Runs against the live standalone service and local cryptography modules.
 """
 import json

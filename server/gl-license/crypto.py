@@ -1,4 +1,4 @@
-"""Pure-Python (standard library only) crypto primitives for GhostLock licensing.
+"""Pure-Python (standard library only) crypto primitives for XproSU licensing.
 
 Implements exactly what docs/stage2-protocol.md requires:
 

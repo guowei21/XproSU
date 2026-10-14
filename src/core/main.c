@@ -1,5 +1,5 @@
 ﻿/*
- * GhostLock 鈥?CVE-2026-43499 futex PI UAF exploit
+ * XproSU 鈥?CVE-2026-43499 futex PI UAF exploit
  *
  * W1: SELinux permissive -> W2: cred = init_cred -> W3: seccomp bypass ->
  * independent root shell: ksud late-load + module watch.

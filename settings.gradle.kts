@@ -27,5 +27,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "GhostLock"
+rootProject.name = "XproSU"
 include(":app")

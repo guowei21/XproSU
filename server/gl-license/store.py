@@ -1,4 +1,4 @@
-"""SQLite card/token store for the GhostLock licensing service.
+"""SQLite card/token store for the XproSU licensing service.
 
 Standalone (no U验证 upstream).  Card keys are never stored: only
 ``card_hash = SHA-256(card_key).hex()`` is persisted.  Card plaintext format:

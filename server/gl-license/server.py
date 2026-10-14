@@ -1,4 +1,4 @@
-"""GhostLock licensing HTTP server + Web Admin Console (zero third-party dependencies).
+"""XproSU licensing HTTP server + Web Admin Console (zero third-party dependencies).
 
 Standalone build: the card authority lives entirely in ``cards.db``.
 Provides both the binary/JSON client licensing endpoints and the Web UI console
@@ -227,7 +227,7 @@ class LicensingContext:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "GhostLockLicense/2.1"
+    server_version = "XproSU-License/2.1"
     protocol_version = "HTTP/1.1"
 
     @property
@@ -893,7 +893,7 @@ def main(argv: list[str] | None = None) -> int:
     port = int(cfg.get("listen_port", 8787))
     server = ThreadingHTTPServer((host, port), _Handler)
     server.context = ctx  # type: ignore[attr-defined]
-    print(f"GhostLock license server + Web Console listening on {host}:{port}")
+    print(f"XproSU license server + Web Console listening on {host}:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

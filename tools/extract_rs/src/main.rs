@@ -23,7 +23,7 @@ use ghostlock_extract::symbols::{kernel_struct_macro, resolve_structs, resolve_s
 #[derive(Parser, Debug)]
 #[command(
     name = "ghostlock-extract",
-    about = "Extract GhostLock kernel offsets from boot.img / arm64 Image / payload.bin / OTA URL",
+    about = "Extract XproSU kernel offsets from boot.img / arm64 Image / payload.bin / OTA URL",
     after_help = "examples:\n  ghostlock-extract boot.img --format json --out offsets.json\n  ghostlock-extract boot.img --xbl-config xbl_config.img --register\n  ghostlock-extract payload.bin --register\n  ghostlock-extract https://host/payload.bin --format json --out offsets.json\n  ghostlock-extract boot.img --format c --out offsets.h --name device\nWhen --kallsyms is omitted, the embedded kallsyms table is recovered from the kernel image itself (no root needed); on a rooted phone /proc/kallsyms is used first."
 )]
 struct Cli {

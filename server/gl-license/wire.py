@@ -1,4 +1,4 @@
-"""Binary wire protocol for the GhostLock App <-> license server (GlBlob.kt).
+"""Binary wire protocol for the XproSU App <-> license server (GlBlob.kt).
 
 Little-endian throughout.  ``decode`` returns ``(kind, entries)``: ``kind`` is
 1 for a request and 2 for a response, ``entries`` maps each u16 tag to its raw

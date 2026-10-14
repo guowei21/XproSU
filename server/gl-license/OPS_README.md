@@ -1,4 +1,4 @@
-# GhostLock gl-license 运维速查（standalone 版）
+# XproSU gl-license 运维速查（standalone 版）
 
 > 2026-10-13 改造：**已彻底移除 U验证（uverif）上游依赖**。
 > 卡密的签发、绑定、禁用、吊销全部在本地 `cards.db` 完成，不再创建账号。

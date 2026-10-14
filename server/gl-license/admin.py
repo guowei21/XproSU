@@ -1,4 +1,4 @@
-"""Command-line administration for the GhostLock licensing service.
+"""Command-line administration for the XproSU licensing service.
 
 Reads the same config.json as server.py.
     python admin.py gen --days 365 --count 10 [--batch 2026Q1] [--note VIP]
@@ -150,7 +150,7 @@ def cmd_build_payload(cfg: dict, args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="admin.py", description="GhostLock license admin tool")
+    parser = argparse.ArgumentParser(prog="admin.py", description="XproSU license admin tool")
     parser.add_argument("--config", default=os.path.join(BASE_DIR, "config.json"), help="config.json path")
     sub = parser.add_subparsers(dest="command", required=True)
 

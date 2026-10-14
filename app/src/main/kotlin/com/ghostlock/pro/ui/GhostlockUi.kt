@@ -141,7 +141,7 @@ internal fun GhostlockApp(
             modifier = Modifier.fillMaxSize(),
             topBar = {
                 TopAppBar(
-                    title = "GhostLock",
+                    title = "XproSU",
                     scrollBehavior = scrollBehavior,
                     actions = {},
                 )

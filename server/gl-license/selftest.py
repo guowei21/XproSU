@@ -1,4 +1,4 @@
-"""Cryptographic self-test for GhostLock licensing service.
+"""Cryptographic self-test for XproSU licensing service.
 
 Runs the frozen test vectors from docs/stage2-protocol.md section 7 plus a
 random P-256 ECDH round-trip.  Exits non-zero if any check fails.
@@ -220,7 +220,7 @@ def test_jdk_crosscheck() -> None:
 
 
 def main() -> int:
-    print("=== GhostLock license crypto self-test ===")
+    print("=== XproSU license crypto self-test ===")
     test_hkdf_rfc5869_case1()
     test_chacha20_poly1305_rfc8439()
     test_aes128_cbc_nist()

@@ -1,4 +1,4 @@
-"""End-to-end smoke test for the GhostLock licensing crypto chain.
+"""End-to-end smoke test for the XproSU licensing crypto chain.
 
 No HTTP server is started.  It runs Kd derivation, GLT2 build/decrypt and
 ECIES wrap/unwrap with fixed inputs, then writes the reproducible values to
