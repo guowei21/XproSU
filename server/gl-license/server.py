@@ -1,4 +1,4 @@
-"""XproSU licensing HTTP server + Web Admin Console (zero third-party dependencies).
+"""GhostLock licensing HTTP server + Web Admin Console (zero third-party dependencies).
 
 Standalone build: the card authority lives entirely in ``cards.db``.
 Provides both the binary/JSON client licensing endpoints and the Web UI console
@@ -61,6 +61,13 @@ INSECURE_ADMIN_KEYS = {"", "CHANGE-ME-admin", "changeme", "admin", "password"}
 # 不同 device_fp 一律拒绝，且**没有任何**解绑/换绑入口 —— 管理 API、Web 后台、
 # CLI 三处都不存在该行为。仅用于给前端声明事实，不要把它接到 cfg 上。
 DEVICE_REBIND_SUPPORTED = False
+
+# 卡密类型只有两种：
+#   test      → 测试卡，3600 秒（1 小时）。计时从**首次绑定那台机器**开始，
+#               未激活期间不过期。
+#   permanent → 永久卡，永不过期。
+# 生成时 expire 一律写 0；真正的时间点由 claim_card_verbose 在首次绑定时写入。
+TEST_CARD_DURATION = 3600
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSION_COOKIE = "gl_admin_sid"
@@ -227,7 +234,7 @@ class LicensingContext:
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "XproSU-License/2.1"
+    server_version = "GhostLockLicense/2.1"
     protocol_version = "HTTP/1.1"
 
     @property
@@ -583,31 +590,56 @@ class _Handler(BaseHTTPRequestHandler):
     # -- Client licensing endpoints -----------------------------------------
 
     def _activate(self, data: dict | None, wire: bool) -> None:
+        # 诊断：拒绝时把「请求形态」写进日志（不落卡密明文，只看字节长度 / 是否纯 ASCII /
+        # 哈希前缀），用来区分「卡密串被输入法改坏」与「设备参数畸形」。
+        diag_ip = client_ip(self.headers, self.client_address[0])
         if data is None:
+            self.log_message("activate REJECT unparsable-body ip=%s", diag_ip)
             self._fail(1005, "参数错误", wire)
             return
         card = normalize_card_key(data.get("card") or "")
         device_fp_hex = data.get("device_fp")
         pubkey_hex = data.get("pubkey")
         if not card:
+            self.log_message("activate REJECT empty-card ip=%s", diag_ip)
             self._fail(1005, "参数错误", wire)
             return
         try:
             device_fp = bytes.fromhex(device_fp_hex or "")
             pubkey = bytes.fromhex(pubkey_hex or "")
         except (TypeError, ValueError):
+            self.log_message(
+                "activate REJECT bad-hex card_len=%d card_ascii=%s fp_chars=%d pk_chars=%d ip=%s",
+                len(card.encode("utf-8")), card.isascii(),
+                len(str(device_fp_hex or "")), len(str(pubkey_hex or "")), diag_ip,
+            )
             self._fail(1005, "参数错误", wire)
             return
         if len(device_fp) != 32:
+            self.log_message(
+                "activate REJECT bad-fp bytes=%d card_len=%d ip=%s",
+                len(device_fp), len(card.encode("utf-8")), diag_ip,
+            )
             self._fail(1005, "参数错误", wire)
             return
         if len(pubkey) != 65 or pubkey[0] != 0x04:
+            self.log_message(
+                "activate REJECT bad-pubkey bytes=%d first=0x%02x ip=%s",
+                len(pubkey), (pubkey[0] if pubkey else 0), diag_ip,
+            )
             self._fail(1005, "参数错误", wire)
             return
 
         card_hash_value = card_hash(card)
         local = self.ctx.store.get_card(card_hash_value)
         if local is None:
+            # 库里查不到这张卡。正常卡密是 23 个 ASCII 字符（4 组 5 位 + 3 个横杠）；
+            # 长度不对或含非 ASCII 就说明输入被输入法/剪贴板改坏了（全角字符等）。
+            self.log_message(
+                "activate REJECT card-not-found hash=%s card_len=%d ascii=%s head=%s ip=%s",
+                card_hash_value[:16], len(card.encode("utf-8")), card.isascii(),
+                card[:5], diag_ip,
+            )
             self._fail(1001, "卡密无效", wire)
             return
         if local.get("state") in ("disabled", "revoked"):
@@ -675,6 +707,9 @@ class _Handler(BaseHTTPRequestHandler):
                     prev_ip,
                     peer_ip,
                 )
+        # 测试卡的计时在**首次绑定**那一刻才开始（claim_card_verbose 写的），
+        # 所以容器头与响应都必须用绑定后的生效到期时间，而不是绑之前的 0。
+        expire = int(claim.get("expire") or expire)
         try:
             blob = build_glt2_from_glp(self.ctx.payload_glp, device_fp, card, kd, expire)
             wrapped = ecies_wrap(pubkey, kd, card)
@@ -740,28 +775,44 @@ class _Handler(BaseHTTPRequestHandler):
     # 校验卡密与设备指纹，但**不写任何状态**，也**不发 token**。后台删卡/封卡
     # 立刻生效：下一次 session 直接 1001。离线 = 用不了，这是刻意的。
     def _session(self, data: dict | None, wire: bool) -> None:
+        diag_ip = client_ip(self.headers, self.client_address[0])
         if data is None:
+            self.log_message("session REJECT unparsable-body ip=%s", diag_ip)
             self._fail(1005, "参数错误", wire)
             return
         card = normalize_card_key(data.get("card") or "")
         device_fp_hex = data.get("device_fp")
         pubkey_hex = data.get("pubkey")
         if not card:
+            self.log_message("session REJECT empty-card ip=%s", diag_ip)
             self._fail(1005, "参数错误", wire)
             return
         try:
             device_fp = bytes.fromhex(device_fp_hex or "")
             pubkey = bytes.fromhex(pubkey_hex or "")
         except (TypeError, ValueError):
+            self.log_message(
+                "session REJECT bad-hex card_len=%d card_ascii=%s ip=%s",
+                len(card.encode("utf-8")), card.isascii(), diag_ip,
+            )
             self._fail(1005, "参数错误", wire)
             return
         if len(device_fp) != 32 or len(pubkey) != 65 or pubkey[0] != 0x04:
+            self.log_message(
+                "session REJECT bad-params fp=%d pk=%d ip=%s",
+                len(device_fp), len(pubkey), diag_ip,
+            )
             self._fail(1005, "参数错误", wire)
             return
 
         card_hash_value = card_hash(card)
         local = self.ctx.store.get_card(card_hash_value)
         if local is None:
+            self.log_message(
+                "session REJECT card-not-found hash=%s card_len=%d ascii=%s head=%s ip=%s",
+                card_hash_value[:16], len(card.encode("utf-8")), card.isascii(),
+                card[:5], diag_ip,
+            )
             self._fail(1001, "卡密无效", wire)
             return
         if local.get("state") in ("disabled", "revoked"):
@@ -813,12 +864,32 @@ class _Handler(BaseHTTPRequestHandler):
 
     # 没有 _admin_rebind：绑定不可解除，见 do_POST 里的说明。
 
+    @staticmethod
+    def _card_type_duration(data: dict) -> int | None:
+        """把管理端传来的卡密类型翻成时长（秒）。None = 参数非法。
+
+        只保留两种类型：
+          test      → 3600 秒（1 小时），**首次绑定那台机器时**才开始计时；
+          permanent → 0（永不过期）。
+
+        `days` 是历史参数，仅为兼容旧脚本保留：days>0 走绝对到期（legacy）。
+        """
+        raw_type = str(data.get("type") or "").strip().lower()
+        if raw_type in ("test", "trial", "测试", "测试卡"):
+            return TEST_CARD_DURATION
+        if raw_type in ("permanent", "forever", "perm", "永久", "永久卡"):
+            return 0
+        if raw_type:
+            return None
+        # 没给 type：默认永久卡；带了 days 的旧调用按绝对到期处理。
+        return 0
+
     def _admin_gencard(self, data: dict) -> None:
         try:
             count = int(data.get("count", 1))
-            days = int(data.get("days", 365))
+            days = int(data.get("days", 0) or 0)
         except (TypeError, ValueError):
-            self._send_error(1005, "days/count 必须是整数")
+            self._send_error(1005, "count/days 必须是整数")
             return
         if count < 1 or count > 10000:
             self._send_error(1005, "count 超出范围")
@@ -826,10 +897,16 @@ class _Handler(BaseHTTPRequestHandler):
         if days < 0:
             self._send_error(1005, "days 不能为负")
             return
+        duration = self._card_type_duration(data)
+        if duration is None:
+            self._send_error(1005, "type 只能是 test 或 permanent")
+            return
         batch = str(data.get("batch") or "").strip() or None
         note = str(data.get("note") or "").strip() or None
-        cards = self.ctx.store.gen_cards(count, days, batch=batch, note=note)
-        self._send_ok({"code": 0, "cards": cards})
+        cards = self.ctx.store.gen_cards(
+            count, days, batch=batch, note=note, duration_sec=duration
+        )
+        self._send_ok({"code": 0, "cards": cards, "type": "test" if duration else "permanent"})
 
     def _admin_importcards(self, data: dict) -> None:
         keys = data.get("cards")
@@ -837,16 +914,23 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_error(1005, "cards 必须是非空数组")
             return
         try:
-            days = int(data.get("days", 0))
+            days = int(data.get("days", 0) or 0)
         except (TypeError, ValueError):
             self._send_error(1005, "days 必须是整数")
             return
         if days < 0:
             self._send_error(1005, "days 不能为负")
             return
+        duration = self._card_type_duration(data)
+        if duration is None:
+            self._send_error(1005, "type 只能是 test 或 permanent")
+            return
         batch = str(data.get("batch") or "").strip() or None
         note = str(data.get("note") or "").strip() or None
-        inserted = self.ctx.store.import_cards([str(k) for k in keys], days=days, batch=batch, note=note)
+        inserted = self.ctx.store.import_cards(
+            [str(k) for k in keys], days=days, batch=batch, note=note,
+            duration_sec=duration,
+        )
         self._send_ok({"code": 0, "inserted": inserted, "total": len(keys)})
 
     def _admin_list(self, data: dict) -> None:
@@ -893,7 +977,7 @@ def main(argv: list[str] | None = None) -> int:
     port = int(cfg.get("listen_port", 8787))
     server = ThreadingHTTPServer((host, port), _Handler)
     server.context = ctx  # type: ignore[attr-defined]
-    print(f"XproSU license server + Web Console listening on {host}:{port}")
+    print(f"GhostLock license server + Web Console listening on {host}:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

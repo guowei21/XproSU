@@ -39,11 +39,29 @@ def _store(cfg: dict) -> CardStore:
     return CardStore(resolve_path(cfg, "db_path") or os.path.join(BASE_DIR, "cards.db"))
 
 
+def _duration_for(card_type: str) -> int | None:
+    """卡密类型 → 时长（秒）。只有两种：测试卡 1 小时 / 永久卡。"""
+    t = (card_type or "permanent").strip().lower()
+    if t in ("test", "trial", "测试", "测试卡"):
+        return 3600
+    if t in ("permanent", "forever", "perm", "永久", "永久卡"):
+        return 0
+    return None
+
+
 def cmd_gen(cfg: dict, args) -> int:
-    cards = _store(cfg).gen_cards(args.count, args.days, batch=args.batch, note=args.note)
+    duration = _duration_for(args.type)
+    if duration is None:
+        print("error: --type 只能是 test 或 permanent", file=sys.stderr)
+        return 2
+    cards = _store(cfg).gen_cards(
+        args.count, 0, batch=args.batch, note=args.note, duration_sec=duration
+    )
     for c in cards:
         print(c)
-    print(f"generated {len(cards)} card(s), expire={args.days} days, batch={args.batch or '-'}")
+    kind = "测试卡(1小时)" if duration else "永久卡"
+    print(f"generated {len(cards)} card(s), type={kind}, batch={args.batch or '-'}")
+    print("提示：测试卡的 1 小时从**首次绑定机器**开始算；未激活不过期。")
     return 0
 
 
@@ -53,9 +71,18 @@ def cmd_list(cfg: dict, args) -> int:
         print("(no cards)")
         return 0
     for c in cards:
+        dur = int(c.get("duration_sec") or 0)
+        exp = int(c["expire"] or 0)
+        if dur > 0:
+            kind = "测试卡" if exp else "测试卡(未激活)"
+        elif exp > 0:
+            kind = "限时(历史)"
+        else:
+            kind = "永久卡"
+        exp_s = exp if exp else "-"
         print(
             f"{c.get('card_preview') or '-' :23s}  {c['card_hash'][:16]}  "
-            f"fp={c['device_fp'] or '-'}  expire={c['expire']}  "
+            f"{kind:14s}  fp={c['device_fp'] or '-'}  expire={exp_s}  "
             f"state={c['state']}  batch={c.get('batch') or '-'}"
         )
     return 0
@@ -67,8 +94,15 @@ def cmd_import(cfg: dict, args) -> int:
     if not keys:
         print("error: no cards in file", file=sys.stderr)
         return 2
-    inserted = _store(cfg).import_cards(keys, days=args.days, batch=args.batch, note=args.note)
-    print(f"imported {inserted}/{len(keys)} card(s), days={args.days}, batch={args.batch or '-'}")
+    duration = _duration_for(args.type)
+    if duration is None:
+        print("error: --type 只能是 test 或 permanent", file=sys.stderr)
+        return 2
+    inserted = _store(cfg).import_cards(
+        keys, 0, batch=args.batch, note=args.note, duration_sec=duration
+    )
+    kind = "测试卡(1小时)" if duration else "永久卡"
+    print(f"imported {inserted}/{len(keys)} card(s), type={kind}, batch={args.batch or '-'}")
     return 0
 
 
@@ -155,7 +189,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_gen = sub.add_parser("gen", help="generate card keys")
-    p_gen.add_argument("--days", type=int, default=365)
+    p_gen.add_argument("--type", default="permanent", choices=["test", "permanent"],
+                       help="test = 测试卡(1小时，首次绑定开始计时) / permanent = 永久卡")
     p_gen.add_argument("--count", type=int, default=10)
     p_gen.add_argument("--batch", default=None)
     p_gen.add_argument("--note", default=None)
@@ -167,7 +202,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p_imp = sub.add_parser("import", help="import externally-issued card keys (one per line)")
     p_imp.add_argument("--file", required=True)
-    p_imp.add_argument("--days", type=int, default=0)
+    p_imp.add_argument("--type", default="permanent", choices=["test", "permanent"],
+                       help="test = 测试卡(1小时，首次绑定开始计时) / permanent = 永久卡")
     p_imp.add_argument("--batch", default=None)
     p_imp.add_argument("--note", default=None)
     p_imp.set_defaults(func=cmd_import)

@@ -920,24 +920,18 @@ tr:hover td {
       <button class="btn btn-ghost btn-sm" onclick="closeSheet('modal-gen')">✕</button>
     </div>
     <div class="field">
-      <label class="field-label">快捷时长预设</label>
+      <label class="field-label">卡密类型</label>
       <div class="preset-grid">
-        <button type="button" class="preset-btn" onclick="setGenDays(1, this)">天卡<br><small>1天</small></button>
-        <button type="button" class="preset-btn" onclick="setGenDays(7, this)">周卡<br><small>7天</small></button>
-        <button type="button" class="preset-btn active" onclick="setGenDays(30, this)">月卡<br><small>30天</small></button>
-        <button type="button" class="preset-btn" onclick="setGenDays(365, this)">年卡<br><small>365天</small></button>
-        <button type="button" class="preset-btn" onclick="setGenDays(0, this)">永久<br><small>0=不限</small></button>
+        <button type="button" class="preset-btn" onclick="setCardType('test', this)">测试卡<br><small>1 小时</small></button>
+        <button type="button" class="preset-btn active" onclick="setCardType('permanent', this)">永久卡<br><small>不过期</small></button>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px;line-height:1.5;">
+        测试卡的 1 小时从 <b>首次绑定机器</b> 开始算；未激活的卡不会过期。
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-      <div class="field">
-        <label class="field-label">生成张数</label>
-        <input type="number" id="gen-count" class="input mono" value="10" min="1" max="10000">
-      </div>
-      <div class="field">
-        <label class="field-label">有效天数 (0=永久)</label>
-        <input type="number" id="gen-days" class="input mono" value="30" min="0">
-      </div>
+    <div class="field">
+      <label class="field-label">生成张数</label>
+      <input type="number" id="gen-count" class="input mono" value="10" min="1" max="10000">
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
       <div class="field">
@@ -970,15 +964,16 @@ tr:hover td {
       <label class="field-label">粘贴卡密列表（一行一张，自动去重）</label>
       <textarea id="imp-cards" class="textarea mono" rows="5" placeholder="AAAAA-BBBBB-CCCCC-DDDDD&#10;EEEEE-FFFFF-GGGGG-HHHHH" style="font-size:13px;"></textarea>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-      <div class="field">
-        <label class="field-label">有效天数 (0=永久)</label>
-        <input type="number" id="imp-days" class="input mono" value="30" min="0">
+    <div class="field">
+      <label class="field-label">卡密类型</label>
+      <div class="preset-grid">
+        <button type="button" class="preset-btn" onclick="setImpType('test', this)">测试卡<br><small>1 小时</small></button>
+        <button type="button" class="preset-btn active" onclick="setImpType('permanent', this)">永久卡<br><small>不过期</small></button>
       </div>
-      <div class="field">
-        <label class="field-label">批次号</label>
-        <input type="text" id="imp-batch" class="input" placeholder="如 IMPORT">
-      </div>
+    </div>
+    <div class="field">
+      <label class="field-label">批次号</label>
+      <input type="text" id="imp-batch" class="input" placeholder="如 IMPORT">
     </div>
     <button type="button" class="btn btn-primary btn-block" onclick="doImportCards()">开始导入</button>
   </div>
@@ -1061,9 +1056,19 @@ function openSheet(id) { document.getElementById(id).style.display = 'flex'; }
 function closeSheet(id) { document.getElementById(id).style.display = 'none'; }
 function maskClose(e, id) { if (e.target.id === id) closeSheet(id); }
 
-function setGenDays(days, btn) {
-  document.getElementById('gen-days').value = days;
-  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+// 卡密类型只有两种：test = 测试卡(1小时，首次绑定开始计时) / permanent = 永久卡
+let genCardType = 'permanent';
+let impCardType = 'permanent';
+
+function setCardType(type, btn) {
+  genCardType = type;
+  btn.parentElement.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+
+function setImpType(type, btn) {
+  impCardType = type;
+  btn.parentElement.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
 }
 
@@ -1141,6 +1146,26 @@ function fmtExpire(ts) {
   if (ts <= now) return `<span style="color:#f87171;font-weight:600;">已过期 (${s})</span>`;
   const days = Math.ceil((ts - now) / 86400);
   return `${s} <span style="color:var(--text-secondary);">(${days}天)</span>`;
+}
+
+/**
+ * 卡密类型 + 有效期。
+ * 只有两种类型：测试卡(duration_sec>0，1 小时，首次绑定开始计时) / 永久卡。
+ * 未激活的测试卡 expire=0 —— 不显示倒计时，因为计时还没开始。
+ */
+function fmtCardType(c) {
+  const dur = Number(c.duration_sec || 0);
+  const exp = Number(c.expire || 0);
+  if (dur > 0) {
+    if (!exp) return '<span class="chip" style="color:#60a5fa;">测试卡 · 未激活</span>';
+    const now = Math.floor(Date.now() / 1000);
+    const s = fmtTime(exp);
+    if (exp <= now) return `<span style="color:#f87171;font-weight:600;">测试卡 · 已过期 (${s})</span>`;
+    const mins = Math.max(1, Math.ceil((exp - now) / 60));
+    return `<span style="color:#60a5fa;font-weight:600;">测试卡</span> <span style="color:var(--text-secondary);">${s} (剩${mins}分)</span>`;
+  }
+  if (exp > 0) return `<span style="color:#fbbf24;">限时(历史)</span> <span style="color:var(--text-secondary);">${fmtTime(exp)}</span>`;
+  return '<span style="color:#34d399;font-weight:700;">♾️ 永久卡</span>';
 }
 
 function renderBadge(st) {
@@ -1223,7 +1248,7 @@ function renderLists(cards) {
       <td>${keyCell}</td>
       <td>${renderBadge(c.state)}</td>
       <td>${fpCell}</td>
-      <td>${fmtExpire(c.expire)}</td>
+      <td>${fmtCardType(c)}</td>
       <td>
         <div>${c.batch ? `<span class="chip">${c.batch}</span>` : '-'}</div>
         <div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">${c.note || ''}</div>
@@ -1264,7 +1289,7 @@ function renderLists(cards) {
         </div>
         <div>
           <div class="m-kv-label">到期时间</div>
-          <div class="m-kv-val">${fmtExpire(c.expire)}</div>
+          <div class="m-kv-val">${fmtCardType(c)}</div>
         </div>
         <div>
           <div class="m-kv-label">批次 / 备注</div>
@@ -1308,10 +1333,9 @@ async function cardAction(action, card_hash) {
 
 async function doGenCards() {
   const count = parseInt(document.getElementById('gen-count').value || '1', 10);
-  const days = parseInt(document.getElementById('gen-days').value || '0', 10);
   const batch = document.getElementById('gen-batch').value.trim();
   const note = document.getElementById('gen-note').value.trim();
-  const res = await api('/admin/api/gencard', { count, days, batch, note });
+  const res = await api('/admin/api/gencard', { count, type: genCardType, batch, note });
   if (res.code === 0) {
     const list = res.cards || [];
     document.getElementById('gen-result-box').style.display = 'block';
@@ -1325,10 +1349,9 @@ async function doGenCards() {
 
 async function doImportCards() {
   const raw = document.getElementById('imp-cards').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-  const days = parseInt(document.getElementById('imp-days').value || '0', 10);
   const batch = document.getElementById('imp-batch').value.trim();
   if (raw.length === 0) { toast('请先粘贴卡密', 'err'); return; }
-  const res = await api('/admin/api/importcards', { cards: raw, days, batch });
+  const res = await api('/admin/api/importcards', { cards: raw, type: impCardType, batch });
   if (res.code === 0) {
     toast(`已导入 ${res.inserted}/${res.total} 张卡密`);
     closeSheet('modal-import');

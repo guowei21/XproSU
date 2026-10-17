@@ -76,6 +76,8 @@ class GhostlockViewModel(
                 cpuPairIndex = idx,
                 isLicensed = license.isActivated(),
                 licenseExpiry = cached?.expiry.orEmpty(),
+                // 永久卡：expireAt == 0（服务端 expire=0）。界面据此显示「永久授权」。
+                licensePermanent = cached != null && cached.expireAt == 0L,
             )
         }
         viewModelScope.launch { refreshSnapshot() }
@@ -184,7 +186,7 @@ class GhostlockViewModel(
     /** 授权被收回：同步 UI 到未激活态，并弹一次激活框。 */
     fun onLicenseRevoked() {
         mutableState.update {
-            it.copy(isLicensed = false, licenseExpiry = "")
+            it.copy(isLicensed = false, licenseExpiry = "", licensePermanent = false)
         }
         openActivateDialog()
     }
@@ -235,6 +237,7 @@ class GhostlockViewModel(
                             activating = false,
                             isLicensed = true,
                             licenseExpiry = result.record.expiry,
+                            licensePermanent = result.record.expireAt == 0L,
                         )
                     }
                     if (BuildConfig.DEBUG) appendLog("license activated on ${license.deviceId}")
@@ -287,10 +290,11 @@ class GhostlockViewModel(
                     it.copy(
                         isLicensed = activated,
                         licenseExpiry = if (activated) it.licenseExpiry else "",
+                        licensePermanent = if (activated) it.licensePermanent else false,
                     )
                 }
                 if (!activated) {
-                    mutableState.update { it.copy(licenseExpiry = "") }
+                    mutableState.update { it.copy(licenseExpiry = "", licensePermanent = false) }
                     openActivateDialog()
                 }
                 continue
@@ -299,6 +303,7 @@ class GhostlockViewModel(
                 it.copy(
                     isLicensed = license.isActivated(),
                     licenseExpiry = refreshed.expiry,
+                    licensePermanent = refreshed.expireAt == 0L,
                 )
             }
         }

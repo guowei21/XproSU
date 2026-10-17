@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS cards (
     device_fp   TEXT,
     pubkey      TEXT,
     expire      INTEGER NOT NULL,
+    duration_sec INTEGER DEFAULT 0,
     state       TEXT NOT NULL,
     created_at  INTEGER NOT NULL,
     bound_at    INTEGER,
@@ -178,6 +179,7 @@ class CardStore:
             ("pubkey_rotations", "INTEGER"),
             ("prev_pubkey", "TEXT"),
             ("last_pubkey_at", "INTEGER"),
+            ("duration_sec", "INTEGER"),
         ):
             if col not in card_cols:
                 conn.execute(f"ALTER TABLE cards ADD COLUMN {col} {decl}")
@@ -272,6 +274,7 @@ class CardStore:
             "rotations": 0,
             "reason": None,
             "last_ip": None,
+            "expire": 0,
         }
         with self._connect() as conn:
             existing = conn.execute(
@@ -290,10 +293,23 @@ class CardStore:
                 (card_hash_value, expire, now),
             )
             row = conn.execute(
-                "SELECT device_fp, pubkey, pubkey_rotations, prev_pubkey, last_pubkey_at "
+                "SELECT device_fp, pubkey, pubkey_rotations, prev_pubkey, last_pubkey_at, "
+                "       expire, duration_sec "
                 "FROM cards WHERE card_hash = ?",
                 (card_hash_value,),
             ).fetchone()
+            # 计时起点：测试卡（duration_sec>0）在**首次绑定**时才开始算；
+            # 未绑定期间 expire 保持 0 —— 未激活的卡永不过期。
+            # 永久卡（duration_sec=0 且 expire=0）永远不过期；
+            # 历史卡（duration_sec=0 且 expire>0）沿用原来的绝对到期时间。
+            stored_expire = int((row["expire"] or 0) if row else 0)
+            duration = int((row["duration_sec"] or 0) if row else 0)
+            if duration > 0 and stored_expire == 0:
+                effective_expire = now + duration
+            else:
+                effective_expire = stored_expire
+            result["expire"] = effective_expire
+
             last_ok = conn.execute(
                 "SELECT client_ip FROM activation_audit WHERE card_hash = ? "
                 "AND result != 'rejected' ORDER BY id DESC LIMIT 1",
@@ -357,7 +373,7 @@ class CardStore:
                     (stored_pk or prev_pk) if rotated else prev_pk,
                     now if rotated else (last_at or None),
                     now,
-                    expire,
+                    effective_expire,
                     card_hash_value,
                     device_fp,
                 ),
@@ -433,28 +449,59 @@ class CardStore:
 
     # -- issuing -------------------------------------------------------------
 
-    def gen_cards(self, count: int, days: int, batch: str | None = None, note: str | None = None) -> list[str]:
+    def gen_cards(
+        self,
+        count: int,
+        days: int = 0,
+        batch: str | None = None,
+        note: str | None = None,
+        duration_sec: int = 0,
+    ) -> list[str]:
+        """生成卡密。
+
+        两种类型（duration_sec）：
+          * 0        = 永久卡，永不过期；
+          * >0       = 测试卡，**首次绑定那台机器时**才开始计时。
+
+        `expire` 一律写成 0：未激活的卡没有到期时间，永远不过期。真正的时间点
+        由 claim_card_verbose() 在首次绑定时写入（now + duration_sec）。
+
+        `days` 是历史参数（绝对到期），只为兼容旧的调用方保留；管理后台只用
+        duration_sec 的两种类型。
+        """
         if not isinstance(count, int) or count < 1:
             raise ValueError("count must be a positive integer")
         if not isinstance(days, int) or days < 0:
             raise ValueError("days must be a non-negative integer")
+        if not isinstance(duration_sec, int) or duration_sec < 0:
+            raise ValueError("duration_sec must be a non-negative integer")
         now = int(time.time())
+        # 未激活不过期：只有走历史 days 路径才预置绝对到期时间。
         expire = now + days * 86400 if days > 0 else 0
+        duration = 0 if expire else duration_sec
         keys = []
         with self._connect() as conn:
             for _ in range(count):
                 key = generate_card_key()
                 conn.execute(
-                    "INSERT OR IGNORE INTO cards (card_hash, card_preview, device_fp, expire, state, created_at, bound_at, batch, note) "
-                    "VALUES (?, ?, NULL, ?, 'unbound', ?, NULL, ?, ?)",
-                    (card_hash(key), key, expire, now, batch, note),
+                    "INSERT OR IGNORE INTO cards (card_hash, card_preview, device_fp, expire, duration_sec, state, created_at, bound_at, batch, note) "
+                    "VALUES (?, ?, NULL, ?, ?, 'unbound', ?, NULL, ?, ?)",
+                    (card_hash(key), key, expire, duration, now, batch, note),
                 )
                 keys.append(key)
         return keys
 
-    def import_cards(self, keys: list[str], days: int = 0, batch: str | None = None, note: str | None = None) -> int:
+    def import_cards(
+        self,
+        keys: list[str],
+        days: int = 0,
+        batch: str | None = None,
+        note: str | None = None,
+        duration_sec: int = 0,
+    ) -> int:
         now = int(time.time())
         expire = now + days * 86400 if days > 0 else 0
+        duration = 0 if expire else duration_sec
         inserted = 0
         with self._connect() as conn:
             for raw in keys:
@@ -465,9 +512,9 @@ class CardStore:
                 if not key:
                     continue
                 cur = conn.execute(
-                    "INSERT OR IGNORE INTO cards (card_hash, card_preview, device_fp, expire, state, created_at, bound_at, batch, note) "
-                    "VALUES (?, ?, NULL, ?, 'unbound', ?, NULL, ?, ?)",
-                    (card_hash(key), key, expire, now, batch, note),
+                    "INSERT OR IGNORE INTO cards (card_hash, card_preview, device_fp, expire, duration_sec, state, created_at, bound_at, batch, note) "
+                    "VALUES (?, ?, NULL, ?, ?, 'unbound', ?, NULL, ?, ?)",
+                    (card_hash(key), key, expire, duration, now, batch, note),
                 )
                 inserted += cur.rowcount
         return inserted
