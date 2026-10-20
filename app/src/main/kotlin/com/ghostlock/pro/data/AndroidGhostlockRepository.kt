@@ -79,7 +79,7 @@ class AndroidGhostlockRepository(
         selectedPair = pair
     }
 
-    override fun tcpRouteEnabled(): Boolean = prefs.getBoolean(KEY_TCP_ROUTE, true)
+    override fun tcpRouteEnabled(): Boolean = prefs.getBoolean(KEY_TCP_ROUTE, false)
 
     override fun setTcpRouteEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_TCP_ROUTE, enabled).apply()

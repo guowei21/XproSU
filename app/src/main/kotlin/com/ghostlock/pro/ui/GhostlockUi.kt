@@ -79,8 +79,8 @@ data class GhostlockUiState(
     val kernelSupported: Boolean = false,
     val running: Boolean = false,
     val safeModeEnabled: Boolean = false,
-    /** W1 路由：true = socket(tcp) 路由，false = mcast 路由。 */
-    val tcpRouteEnabled: Boolean = true,
+    /** W1 路由：true = socket(tcp) 路由，false = mcast 路由（默认，真机验证路线）。 */
+    val tcpRouteEnabled: Boolean = false,
     val executionSheetVisible: Boolean = false,
     val executionSheetDismissible: Boolean = false,
     val dialogVisible: Boolean = false,
