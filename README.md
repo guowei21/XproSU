@@ -22,6 +22,7 @@
 | `buildSrc/` | 空壳（生成 `SupportedKernels.kt` 的任务已废弃，该文件改为手写） |
 | `server/gl-license/` | 自建授权服务端（纯 Python 标准库；卡密鉴权 + 按设备派生载荷） |
 | `docs/offsets-binary-format.md` | 偏移表二进制容器（`.glt`）格式与实测证据 |
+| `docs/private-deploy/` | 私有化适配与部署：逐符号偏移提取、内建表烘焙、可复现构建、重打包签名、真机核验 |
 | `docs/upstream-README.md`<br>`docs/upstream-README_ZH.md` | 上游 README 原文（42 条内核 + Rust 提取器说明，**对本工程已不适用**） |
 | `RECONSTRUCTION.md` | 源码还原说明 |
 | `ENCRYPTION-PLAN.md` | 加密与卡密鉴权方案 |
