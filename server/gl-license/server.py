@@ -138,10 +138,12 @@ class LicensingContext:
         self.admin_key = str(cfg.get("admin_key", "")).strip()
         if not self.admin_key or self.admin_key in INSECURE_ADMIN_KEYS:
             raise ValueError("admin_key is unset or insecure")
-        self.admin_user = str(cfg.get("admin_user", "Aa010227")).strip()
+        self.admin_user = str(cfg.get("admin_user", "admin")).strip()
         self.admin_pass_hash = str(cfg.get("admin_pass_hash", "")).strip()
         if not self.admin_pass_hash:
-            default_pass = str(cfg.get("admin_pass", "Aa010227"))
+            default_pass = str(cfg.get("admin_pass", "")).strip()
+            if not default_pass:
+                raise ValueError("admin_pass_hash (or admin_pass) is required")
             self.admin_pass_hash = sha256(default_pass).hex()
 
         self.store = CardStore(resolve_path(cfg, "db_path") or os.path.join(BASE_DIR, "cards.db"))

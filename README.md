@@ -27,9 +27,6 @@
 | `ENCRYPTION-PLAN.md` | 加密与卡密鉴权方案 |
 | `dist/` | 交付 APK 归档 |
 
-> `docs/uverif-*.md` 仅作历史留存：U验证 已整体移除，授权改由
-> `server/gl-license/` 自建服务承担。
-
 **不在这里的东西**：PC 侧的偏移提取脚本与明文 `offsets/*.json` 留在私有化主工程
 （`ghostlock-57-124-145-project/`）。明文表按 `ENCRYPTION-PLAN.md` §1 泄漏点 8 属
 「分发即致命」，**不得进入交付物**。

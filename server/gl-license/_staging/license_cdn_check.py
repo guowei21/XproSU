@@ -1,7 +1,7 @@
 """Public-path check: activate + heartbeat through the real CDN origin
 (CDN -> nginx -> gl-license), not just against 127.0.0.1.
 
-    python license_cdn_check.py https://yz.765163599.xyz/gl /app/config.json
+    python license_cdn_check.py <base-url> <config.json>
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ import payload as P
 import wire
 from store import CardStore, card_hash, normalize_card_key
 
-BASE = (sys.argv[1] if len(sys.argv) > 1 else "https://yz.765163599.xyz/gl").rstrip("/")
+BASE = (sys.argv[1] if len(sys.argv) > 1 else os.environ.get("GL_BASE_URL", "http://127.0.0.1:8787")).rstrip("/")
 CFG = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(HERE), "config.json")
 FAIL = []
 

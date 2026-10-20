@@ -65,6 +65,8 @@ def make_ctx(tmpdir: str):
     cfg = {
         "master_key": "00" * 32,
         "admin_key": "negative-test-admin-key-0123456789abcdef",
+        "admin_user": "negative-test",
+        "admin_pass": "negative-test-pass",
         "db_path": os.path.join(tmpdir, "cards.db"),
         "payload_path": payload_path,
     }

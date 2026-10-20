@@ -212,18 +212,16 @@ app/build/outputs/apk/release/GhostLock-v1.1(93)-arm64-v8a-release.apk
 
 | 项 | 值 |
 |---|---|
-| 文件 | `D:\XM\免解\ghostlock-keys\keystore.jks` —— **在源码树外**（它和 `master_key` 是两把总钥匙，放同一个目录等于一起送人） |
+| 文件 | `<离线保存的 keystore 路径>` —— **在源码树外**（它和 `master_key` 是两把总钥匙，放同一个目录等于一起送人） |
 | 别名 | `ghostlock` |
 | 算法 | RSA 4096 / SHA256withRSA / PKCS12 |
 | 有效期 | 至 2056-10-04（10,950 天） |
-| 证书 SHA-256 | `ae315d847fa0cd97bf283605c89f4e3eb8a7b144cbe9213e433869ab2f9b676b` |
-| keystore SHA-256 | `ce61eb9466098a71dffee01ccc58d4424e8b929b6f36d904d67f2c9e3099aa8d` |
 
-`KEYSTORE_PATH` 写的是相对 `app/` 模块的路径（`../../ghostlock-keys/keystore.jks`）。**不要写绝对
+`KEYSTORE_PATH` 写的是相对 `app/` 模块的路径（`../../<keystore-dir>/keystore.jks`）。**不要写绝对
 路径**：工程路径含非 ASCII，而 `local.properties` 按 ISO-8859-1 解析，中文路径会被读坏。
 （找不到 keystore 时 release 构建现在会**直接失败**，不会静默回退 debug 签名。）
 
-⚠️ **`D:\XM\免解\ghostlock-keys\` 与 `local.properties` 立刻离线备份两处**。丢失 = 永远无法再
+⚠️ **keystore 目录与 `local.properties` 立刻离线备份两处**。丢失 = 永远无法再
 更新已售出的 App（用户只能卸载重装；且换签名会改 Widevine DRM ID → 已绑定卡密全部失效）。
 
 > 一个 AGP 行为，别误判成配置没生效：`minSdk = 34` 时 `enableV3Signing = true` 会让 AGP
@@ -231,11 +229,10 @@ app/build/outputs/apk/release/GhostLock-v1.1(93)-arm64-v8a-release.apk
 
 ### 3.4 服务端部署（现状）
 
-`server/gl-license/` 已部署在 `sg`（`hw.912219735.xyz`，Debian 9 / 2G）上，与 U验证 同机：
+`server/gl-license/` 已部署在 `<server-host>` 上：
 
 ```
-CDN(EdgeOne) yz.765163599.xyz --HTTPS--> uverif-web(nginx:8080) --/gl/--> gl-license:8787
-                                                                 \--/----> uverif-php:9000 -> mysql:5.7
+CDN(EdgeOne) <license-host> --HTTPS--> <edge-nginx>:8080 --/gl/--> gl-license:8787
 ```
 
 - 宿主 Python 只有 3.5.3（`gl-license` 需 3.8+），所以跑在容器里：`python:3.12-alpine`，
@@ -243,7 +240,7 @@ CDN(EdgeOne) yz.765163599.xyz --HTTPS--> uverif-web(nginx:8080) --/gl/--> gl-lic
   `--restart unless-stopped`。
 - 对外入口走 `uverif-web` 的 nginx：`location ^~ /gl/` → `proxy_pass http://$gl_upstream`，
   用变量 + `resolver 127.0.0.11`，这样 `gl-license` 容器不在时 nginx 仍能启动。
-- App 侧 `LICENSE_BASE_URL=https://yz.765163599.xyz/gl`，全链路 HTTPS、不放行任何明文。
+- App 侧 `LICENSE_BASE_URL=https://<license-host>/gl`，全链路 HTTPS、不放行任何明文。
 - **8787 那个端口**是 `server.py` 自己的监听端口（`config.json: listen_port`），不是网站
   端口；对外不需要暴露它 —— nginx 在同一个 `uverif-net` 里直接按容器名访问。
 

@@ -2,7 +2,7 @@
 
 > 版本：2026-10-13 生产改造版 —— 已彻底移除 U验证（uverif）上游依赖，
 > 卡密签发/绑定/禁用/吊销全部在本地 `cards.db` 完成。
-> 生产实例后台：https://yz.765163599.xyz/admin/ ；客户端 API 前缀：/gl/
+> 生产实例后台：https://<license-host>/admin/ ；客户端 API 前缀：/gl/
 
 ---
 
