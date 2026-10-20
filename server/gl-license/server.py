@@ -834,6 +834,15 @@ class _Handler(BaseHTTPRequestHandler):
         stored = self.ctx.store.append_logs(
             row["card_hash"], row.get("device_fp"), text.split("\n")
         )
+        self.log_message(
+            "log upload card=%s chars=%d nul=%d lines=%d stored=%d",
+            row["card_hash"][:8], len(text), text.count("\x00"),
+            len(text.split("\n")), stored,
+        )
+        if stored == 0:
+            # 只有空白/NUL 的批次没有任何诊断价值，明确拒绝而不是回 ok。
+            self._fail(1005, "日志为空", wire)
+            return
         if wire:
             self._send_wire_ok([(TAG_MSG, b"ok")])
         else:

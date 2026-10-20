@@ -385,6 +385,19 @@ def test_admin_logs_endpoint(ctx, base):
     )
 
 
+def test_log_upload_blank_1005(ctx, base):
+    ch, _, token = _bound_token(ctx)
+    fresh(ctx)
+    status, payload = post_json(
+        base, "/api/log", {"token": token, "lines": ["   ", "\x00\x00"]},
+    )
+    check(
+        "blank / NUL-only log upload -> 1005",
+        status == 200 and payload.get("code") == 1005,
+        f"{payload}",
+    )
+
+
 def test_log_upload_after_disable_1001(ctx, base):
     ch, _, token = _bound_token(ctx)
     ctx.store.disable_card(ch)
@@ -488,6 +501,7 @@ def main() -> int:
             test_log_upload_binds_to_card(ctx, base)
             test_log_upload_wire(ctx, base)
             test_admin_logs_endpoint(ctx, base)
+            test_log_upload_blank_1005(ctx, base)
             test_log_upload_after_disable_1001(ctx, base)
             test_log_retention_24h(ctx, base)
             test_heartbeat_disabled_state_zero(ctx, base)

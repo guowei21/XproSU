@@ -2,6 +2,7 @@ package com.ghostlock.pro.license
 
 import android.content.Context
 import java.io.File
+import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -24,25 +25,36 @@ class DeviceLogStore(context: Context) {
 
     /** 追加一行；任何 IO 失败都被吞掉——日志不能拖累运行路径。 */
     fun append(line: String) {
+        val bytes = "${stamp.format(Date())} $line\n".toByteArray(Charsets.UTF_8)
         synchronized(lock) {
             try {
                 if (file.length() > MAX_BYTES) {
                     rotated.delete()
                     if (!file.renameTo(rotated)) file.delete()
                 }
-                file.appendText("${stamp.format(Date())} $line\n")
+                RandomAccessFile(file, "rw").use { raf ->
+                    raf.seek(raf.length())
+                    raf.write(bytes)
+                    // f2fs 崩溃回滚会保留文件长度却把未落盘的数据变成 0。卡死重启
+                    // 正是我们要救的场景，所以每行都 fsync，别指望 page cache。
+                    raf.fd.sync()
+                }
             } catch (_: Exception) {
                 // 磁盘满 / 无权限：放弃这一行，不影响激活和提权
             }
         }
     }
 
-    /** 读取最近 [maxLines] 行，用于手动上传。 */
+    /** 读取最近 [maxLines] 行，用于手动上传。空行和 NUL 填充都丢掉。 */
     fun readTail(maxLines: Int = 800): List<String> {
         synchronized(lock) {
             if (!file.isFile) return emptyList()
             return try {
-                file.readLines().takeLast(maxLines)
+                file.readLines()
+                    .asSequence()
+                    .filter { it.replace("\u0000", "").isNotBlank() }
+                    .toList()
+                    .takeLast(maxLines)
             } catch (_: Exception) {
                 emptyList()
             }
