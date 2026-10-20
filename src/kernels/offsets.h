@@ -38,21 +38,39 @@ struct kernel_offsets {
   uint32_t _pad[3];
 };
 
-/* There is deliberately no built-in table here any more.
- *
- * The three device tables that used to live in src/kernels/<release>/offsets.h
- * put every offset value into .rodata as a plaintext u64, so `strings` on the
- * shipped APK reproduced the whole table without any reversing.  The runtime
- * now takes its offsets from <GHOSTLOCK_HOME>/offsets.glt: a container that
- * addresses fields by numeric id and XORs the values with a ChaCha20 keystream
- * (src/core/offsets_bin.c, tools/pack_offsets.py,
- * docs/offsets-binary-format.md).
- *
- * Do not reintroduce a built-in table "just as a fallback".  A field the
- * packer omits reaches the engine as 0, runtime_struct_offsets.h substitutes
- * the 6.6 default, and on a 6.1 kernel the 6.6 task_cred default (0x900) is
- * exactly task_seccomp -- the credential write would land in the seccomp field
- * and the kernel would panic (PANIC_ON_OOPS=y + PANIC_TIMEOUT=-1).  Refusing
- * to run without a blob is the safe behaviour. */
+#define OFFSETS_ENTRY(uname, ...) { .uname_r = uname, __VA_ARGS__ }
+
+#define STRUCT_OFFSETS_6_1                                                     \
+  .task_prio = 0x84, .task_normal_prio = 0x8C, .task_sched_task_group = 0x348, \
+  .task_pi_lock = 0x924, .task_pi_waiters = 0x938,                             \
+  .task_pi_top_task = 0x948, .task_pi_blocked_on = 0x950,                      \
+  .task_pid = 0x630, .task_tgid = 0x634,                                       \
+  .task_atomic_flags = 0x5F0, .task_real_cred = 0x830, .task_cred = 0x838,     \
+  .task_comm = 0x848, .task_tasks = 0x550, .task_seccomp = 0x900,              \
+  .compact_waiter = 1, .mm_struct_sz = 0x400
+
+#define STRUCT_OFFSETS_6_12                                                    \
+  .task_prio = 0x94, .task_normal_prio = 0x9C, .task_sched_task_group = 0x420, \
+  .task_pi_lock = 0x9EC, .task_pi_waiters = 0xA00,                             \
+  .task_pi_top_task = 0xA10, .task_pi_blocked_on = 0xA18,                      \
+  .task_pid = 0x708, .task_tgid = 0x70C,                                       \
+  .task_atomic_flags = 0x6C8, .task_real_cred = 0x8F8, .task_cred = 0x900,     \
+  .task_comm = 0x910, .task_tasks = 0x638, .task_seccomp = 0x9C8
+
+#define STRUCT_OFFSETS_6_6                                                     \
+  .task_prio = 0x84, .task_normal_prio = 0x8C, .task_sched_task_group = 0x348, \
+  .task_pi_lock = 0x90C, .task_pi_waiters = 0x920,                             \
+  .task_pi_top_task = 0x930, .task_pi_blocked_on = 0x938,                      \
+  .task_pid = 0x618, .task_tgid = 0x61C,                                       \
+  .task_atomic_flags = 0x5D8, .task_real_cred = 0x818, .task_cred = 0x820,     \
+  .task_comm = 0x830, .task_tasks = 0x550, .task_seccomp = 0x8E8
+
+static const struct kernel_offsets known_offsets[] = {
+/* Add new kernels by creating src/kernels/<uname-release>/offsets.h */
+#include "6.1.57-android14-11-maybe-dirty/offsets.h"
+#include "6.1.124-android14-11-maybe-dirty/offsets.h"
+#include "6.1.145-android14-11-maybe-dirty/offsets.h"
+  { .uname_r = NULL }
+};
 
 #endif
