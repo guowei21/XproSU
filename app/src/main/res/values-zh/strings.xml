@@ -24,6 +24,9 @@
     <string name="kernel_unsupported_desc">当前系统版本不在支持范围内</string>
     <string name="safe_mode_label">兼容模式</string>
     <string name="safe_mode_summary">启动时自动处理冲突模块</string>
+    <string name="tcp_route_label">TCP 路由</string>
+    <string name="tcp_route_summary">W1 走 socket 路由；关闭则走多播路由</string>
+    <string name="run_route_timeout">路由超时（未卡死），请切换路由后重试</string>
     <string name="cpu_pair_label">处理核心</string>
     <string name="progress_preparing">正在准备…</string>
     <string name="license_sec_title">授权</string>

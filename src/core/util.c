@@ -135,6 +135,12 @@ void log_startup_context(void) {
   pr_success("startup limits pid=%d %s\n", getpid(), limits);
   pr_success("build config pid=%d label=%s slide=pselect main=pselect\n",
              getpid(), BUILD_VARIANT_LABEL);
+  {
+    const char *route = getenv("GHOSTLOCK_ROUTE");
+    pr_success("route=%s tcp=%d mcast=%d\n",
+               (route && *route) ? route : "(unset)",
+               tcp_route_selected(), mcast_route_selected());
+  }
   gl_addr_log("p0 profile pid=%d phys_offset=%016llx kernel_phys_load=%016llx "
              "delta=%016llx slide_logger=%016llx bootid_data=%016llx "
              "init_task=%016llx root_tg=%016llx sysctl_bootid=%016llx\n",

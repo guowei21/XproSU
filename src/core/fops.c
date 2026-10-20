@@ -240,6 +240,7 @@ void do_mcast_fake_lock_route(void) {
     pr_warning("mcast route socket errno=%d\n", errno);
     return;
   }
+  pr_info("mcast route start\n");
 
   int observe = observe_enabled();
 
@@ -277,6 +278,9 @@ void do_mcast_fake_lock_route(void) {
     opt[19] = fake_lock;
     opt[20] = wake_prio;
     errno = 0;
+    if (i == 1 || (i & 7) == 0)
+      pr_info("mcast seq=%d enter calls=%d success=%d\n", i, calls_before,
+              success_before);
     int ret = setsockopt(client_fd, IPPROTO_IP, MCAST_JOIN_SOURCE_GROUP,
                          opt, sizeof(opt));
     int saved_errno = errno;
@@ -343,6 +347,7 @@ void do_tcp_fake_lock_route(void) {
   int server_fd = -1;
   int punch_fd = -1;
   char *map = MAP_FAILED;
+  pr_info("tcp route start\n");
   pthread_t puncher;
   int puncher_started = 0;
   int route_ok = 0;
@@ -732,6 +737,7 @@ void do_pselect_fake_lock_route(void) {
 
   struct timespec route_t0;
   clock_gettime(CLOCK_MONOTONIC, &route_t0);
+  pr_info("pselect route start\n");
   int pipefd[2];
   SYSCHK(pipe(pipefd));
 

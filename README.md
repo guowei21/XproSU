@@ -84,6 +84,9 @@ app **不再内置任何偏移数据**：`assets/` 里没有载荷，全部由�
   服务端按 `card_hash + device_fp` 归档；后台每张卡密都有「日志」入口，只保留
   最近 24 小时，封卡后上传立即被拒。App 侧同时逐行落盘（上限 512 KiB），
   跑挂/重启后可以在「维护」卡片点「立即上传」补交。
+- **W1 路由可切换**：默认 socket(`tcp`)，关闭后走 `mcast`；引擎启动打印
+  `route=…`，每条路由入口打印 `xxx route start`。路由 6 秒无进展时看门狗以
+  退出码 3 结束进程（App 提示“路由超时”），不再把整机卡死。
 
 完整协议见 [`docs/stage2-protocol.md`](docs/stage2-protocol.md)；
 **构建与部署步骤见 [`docs/build-and-deploy.md`](docs/build-and-deploy.md)**；

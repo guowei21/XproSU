@@ -79,6 +79,8 @@ data class GhostlockUiState(
     val kernelSupported: Boolean = false,
     val running: Boolean = false,
     val safeModeEnabled: Boolean = false,
+    /** W1 路由：true = socket(tcp) 路由，false = mcast 路由。 */
+    val tcpRouteEnabled: Boolean = true,
     val executionSheetVisible: Boolean = false,
     val executionSheetDismissible: Boolean = false,
     val dialogVisible: Boolean = false,
@@ -122,6 +124,7 @@ interface GhostlockActions {
     fun onCopyDeviceId() = Unit
     fun onOpenActivateDialog() = Unit
     fun onSafeModeChanged(enabled: Boolean)
+    fun onTcpRouteChanged(enabled: Boolean) = Unit
     fun onCpuPairSelected(index: Int) = Unit
     fun onDialogInputChange(value: String)
     fun onDialogConfirm(value: String)
@@ -229,6 +232,8 @@ private fun PortraitContent(
             MaintenanceCard(
                 safeModeEnabled = state.safeModeEnabled,
                 onSafeModeChanged = actions::onSafeModeChanged,
+                tcpRouteEnabled = state.tcpRouteEnabled,
+                onTcpRouteChanged = actions::onTcpRouteChanged,
                 cpuPairLabels = state.cpuPairLabels,
                 cpuPairIndex = state.cpuPairIndex,
                 onCpuPairSelected = actions::onCpuPairSelected,
@@ -303,6 +308,8 @@ private fun LandscapeContent(
             MaintenanceCard(
                 safeModeEnabled = state.safeModeEnabled,
                 onSafeModeChanged = actions::onSafeModeChanged,
+                tcpRouteEnabled = state.tcpRouteEnabled,
+                onTcpRouteChanged = actions::onTcpRouteChanged,
                 cpuPairLabels = state.cpuPairLabels,
                 cpuPairIndex = state.cpuPairIndex,
                 onCpuPairSelected = actions::onCpuPairSelected,
@@ -725,6 +732,8 @@ private fun ProgressPanel(progress: Int, labelRes: Int) {
 private fun MaintenanceCard(
     safeModeEnabled: Boolean,
     onSafeModeChanged: (Boolean) -> Unit,
+    tcpRouteEnabled: Boolean,
+    onTcpRouteChanged: (Boolean) -> Unit,
     cpuPairLabels: List<String>,
     cpuPairIndex: Int,
     onCpuPairSelected: (Int) -> Unit,
@@ -735,6 +744,20 @@ private fun MaintenanceCard(
         Column(
             modifier = Modifier.fillMaxWidth(),
         ) {
+            SwitchPreference(
+                checked = tcpRouteEnabled,
+                onCheckedChange = onTcpRouteChanged,
+                title = stringResource(R.string.tcp_route_label),
+                summary = stringResource(R.string.tcp_route_summary),
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f)),
+            )
+
             SwitchPreference(
                 checked = safeModeEnabled,
                 onCheckedChange = onSafeModeChanged,

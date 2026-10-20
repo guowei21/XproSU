@@ -119,6 +119,7 @@ private fun GhostlockRoute(
             override fun onUploadLogs() = viewModel.uploadDiagnosticLogs()
             override fun onOpenActivateDialog() = viewModel.openActivateDialog()
             override fun onSafeModeChanged(enabled: Boolean) = viewModel.toggleSafeMode(enabled)
+            override fun onTcpRouteChanged(enabled: Boolean) = viewModel.toggleTcpRoute(enabled)
             override fun onCpuPairSelected(index: Int) = viewModel.onCpuPairSelected(index)
             override fun onDialogInputChange(value: String) = viewModel.onDialogInputChange(value)
             override fun onDialogConfirm(value: String) = viewModel.onDialogConfirm(value)

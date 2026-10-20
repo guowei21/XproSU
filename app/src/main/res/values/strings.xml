@@ -24,6 +24,9 @@
     <string name="kernel_unsupported_desc">This system version is not in the supported range</string>
     <string name="safe_mode_label">Compatibility mode</string>
     <string name="safe_mode_summary">Handle conflicting modules on launch</string>
+    <string name="tcp_route_label">TCP route</string>
+    <string name="tcp_route_summary">Use the socket route for W1; turn off to use the multicast route</string>
+    <string name="run_route_timeout">Route timed out (no freeze); switch the route and retry</string>
     <string name="cpu_pair_label">Worker cores</string>
     <string name="progress_preparing">Preparing…</string>
     <string name="license_sec_title">License</string>

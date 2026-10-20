@@ -82,6 +82,7 @@ class GhostlockViewModel(
             it.copy(
                 cpuPairLabels = repository.availableCpuPairLabels(),
                 cpuPairIndex = idx,
+                tcpRouteEnabled = repository.tcpRouteEnabled(),
                 isLicensed = license.isActivated(),
                 licenseExpiry = cached?.expiry.orEmpty(),
                 // 永久卡：expireAt == 0（服务端 expire=0）。界面据此显示「永久授权」。
@@ -102,6 +103,12 @@ class GhostlockViewModel(
     fun toggleSafeMode(enabled: Boolean) {
         repository.setSafeModeEnabled(enabled)
         mutableState.update { it.copy(safeModeEnabled = enabled) }
+    }
+
+    /** W1 路由开关：true = socket(tcp)，false = mcast。 */
+    fun toggleTcpRoute(enabled: Boolean) {
+        repository.setTcpRouteEnabled(enabled)
+        mutableState.update { it.copy(tcpRouteEnabled = enabled) }
     }
 
     /** [index] 对应 [GhostlockUiState.cpuPairLabels] 的下标；无「自动」项。 */
@@ -159,9 +166,15 @@ class GhostlockViewModel(
                     )
                 }
                 if (code != 0) {
-                    // 竞速窗口没跑到完成（典型：卡在 W1/锁核后的内核写入）：
-                    // 这类失败用户无法自救，明确提示降级。
-                    send(GhostlockEffect.Toast(R.string.run_unsupported_version))
+                    if (code == 3) {
+                        // 路由看门狗主动退出：没卡死，换条路由就能重试。
+                        appendLog("result: route timeout (exit 3)")
+                        send(GhostlockEffect.Toast(R.string.run_route_timeout))
+                    } else {
+                        // 竞速窗口没跑到完成（典型：卡在 W1/锁核后的内核写入）：
+                        // 这类失败用户无法自救，明确提示降级。
+                        send(GhostlockEffect.Toast(R.string.run_unsupported_version))
+                    }
                 }
             } finally {
                 endOperation()

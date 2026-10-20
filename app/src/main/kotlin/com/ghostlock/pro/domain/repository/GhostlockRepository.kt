@@ -21,6 +21,11 @@ interface GhostlockRepository {
     /** 手动指定核心对；传 null 恢复自动优选。 */
     fun selectCpuPair(pair: CpuPair?)
 
+    /** W1 路由：true = socket(tcp) 路由，false = mcast 路由。 */
+    fun tcpRouteEnabled(): Boolean
+
+    fun setTcpRouteEnabled(enabled: Boolean)
+
     /** The CPU pair the exploit will race on. */
     fun bestCpuPair(): CpuPair
 

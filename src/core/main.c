@@ -270,12 +270,43 @@ atomic_int consumer_inflight;
 atomic_int main_route_delay_usec;
 int memfd_leak;
 
+/* A route that never returns used to wedge the whole handset: the waiter
+ * blocks in FUTEX_LOCK_PI/WAIT_REQUEUE_PI and the main thread waits for it
+ * forever.  The watchdog turns that into a clean exit code 3 so the caller can
+ * retry (or switch routes) instead of forcing a reboot. */
+static atomic_int watchdog_stop;
+#define ROUTE_SETUP_TIMEOUT_SEC 3
+#define ROUTE_HARD_TIMEOUT_SEC 6
+
+static void *route_watchdog(void *arg __attribute__((unused))) {
+  for (int i = 0; i < ROUTE_HARD_TIMEOUT_SEC * 10; i++) {
+    if (atomic_load(&watchdog_stop)) return NULL;
+    usleep(100000);
+  }
+  if (!atomic_load(&watchdog_stop) && !atomic_load(&route_done)) {
+    pr_warning("route watchdog: no progress in %ds waiter=%d owner=%d\n",
+               ROUTE_HARD_TIMEOUT_SEC, atomic_load(&waiter_waiting),
+               atomic_load(&owner_started));
+    fflush(stdout);
+    fsync(1);
+    _exit(3);
+  }
+  return NULL;
+}
+
 void *waiter_thread(void *arg __attribute__((unused))) {
   disable_rseq_for_thread();
   int tid = (int)syscall(SYS_gettid);
   atomic_store(&waiter_tid, tid);
-  if (futex_op(&f_pi_chain, FUTEX_LOCK_PI, 0, NULL, NULL, 0) != 0)
-    pr_warning("waiter lock chain errno=%d\n", errno);
+  struct timespec lock_to;
+  clock_gettime(CLOCK_MONOTONIC, &lock_to);
+  lock_to.tv_sec += 2;
+  if (futex_op(&f_pi_chain, FUTEX_LOCK_PI, 0, &lock_to, NULL, 0) != 0) {
+    pr_warning("waiter chain lock failed errno=%d\n", errno);
+    atomic_store(&waiter_waiting, 1);
+    atomic_store(&route_done, 1);
+    return NULL;
+  }
   atomic_store(&waiter_ready, 1);
   while (!atomic_load(&owner_started)) usleep(1000);
   struct timespec timeout;
@@ -299,11 +330,17 @@ void *waiter_thread(void *arg __attribute__((unused))) {
 
 void *owner_thread(void *arg __attribute__((unused))) {
   disable_rseq_for_thread();
-  long lock_target = futex_op(&f_pi_target, FUTEX_LOCK_PI, 0, NULL, NULL, 0);
+  struct timespec lock_to;
+  clock_gettime(CLOCK_MONOTONIC, &lock_to);
+  lock_to.tv_sec += 2;
+  long lock_target = futex_op(&f_pi_target, FUTEX_LOCK_PI, 0, &lock_to, NULL, 0);
   if (lock_target != 0) pr_warning("owner lock target errno=%d\n", errno);
   while (!atomic_load(&waiter_ready)) usleep(1000);
   atomic_store(&owner_started, 1);
-  futex_op(&f_pi_chain, FUTEX_LOCK_PI, 0, NULL, NULL, 0);
+  clock_gettime(CLOCK_MONOTONIC, &lock_to);
+  lock_to.tv_sec += 2;
+  if (futex_op(&f_pi_chain, FUTEX_LOCK_PI, 0, &lock_to, NULL, 0) != 0)
+    pr_warning("owner lock chain errno=%d\n", errno);
   atomic_store(&owner_chain_done, 1);
   while (!atomic_load(&owner_stop)) sleep(1);
   if (lock_target == 0)
@@ -389,24 +426,68 @@ void reset_main_route_state(void) {
 int run_main_route_threads(void) {
   /* reset_main_route_state() is now called by do_one_write before us */
   pthread_t waiter, owner, consumer;
+  atomic_store(&watchdog_stop, 0);
+  pthread_t wd;
+  if (pthread_create(&wd, NULL, route_watchdog, NULL) == 0) pthread_detach(wd);
+
   SYSCHK(pthread_create(&waiter, NULL, waiter_thread, NULL));
   SYSCHK(pthread_create(&owner, NULL, owner_thread, NULL));
   SYSCHK(pthread_create(&consumer, NULL, consumer_thread, NULL));
-  while (!atomic_load(&waiter_waiting) || !atomic_load(&owner_started))
+
+  struct timespec deadline;
+  clock_gettime(CLOCK_MONOTONIC, &deadline);
+  deadline.tv_sec += ROUTE_SETUP_TIMEOUT_SEC;
+  int timed_out = 0;
+
+  while (!atomic_load(&waiter_waiting) || !atomic_load(&owner_started)) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (now.tv_sec > deadline.tv_sec ||
+        (now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec)) {
+      pr_warning("route setup timeout waiter=%d owner=%d\n",
+                 atomic_load(&waiter_waiting), atomic_load(&owner_started));
+      timed_out = 1;
+      break;
+    }
     usleep(1000);
-  usleep(50000);
-  errno = 0;
-  futex_op(&f_wait, FUTEX_CMP_REQUEUE_PI, 1, (void *)1, &f_pi_target, 0);
-  while (!atomic_load(&route_done)) usleep(5000);
+  }
+
+  if (!timed_out) {
+    usleep(50000);
+    errno = 0;
+    futex_op(&f_wait, FUTEX_CMP_REQUEUE_PI, 1, (void *)1, &f_pi_target, 0);
+    clock_gettime(CLOCK_MONOTONIC, &deadline);
+    deadline.tv_sec += ROUTE_SETUP_TIMEOUT_SEC;
+    while (!atomic_load(&route_done)) {
+      struct timespec now;
+      clock_gettime(CLOCK_MONOTONIC, &now);
+      if (now.tv_sec > deadline.tv_sec ||
+          (now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec)) {
+        pr_warning("route done timeout\n");
+        timed_out = 1;
+        break;
+      }
+      usleep(5000);
+    }
+  }
 
   atomic_store(&punch_consume_go, 0);
   atomic_store(&punch_consume_stop, 1);
   atomic_store(&owner_stop, 1);
-  pthread_join(waiter, NULL);
-  pthread_join(owner, NULL);
-  pthread_join(consumer, NULL);
+  atomic_store(&watchdog_stop, 1);
+  if (timed_out) {
+    /* Joining a thread stuck in the kernel would hang us again; leave them
+     * detached and let the next attempt (or the watchdog) take over. */
+    pthread_detach(waiter);
+    pthread_detach(owner);
+    pthread_detach(consumer);
+  } else {
+    pthread_join(waiter, NULL);
+    pthread_join(owner, NULL);
+    pthread_join(consumer, NULL);
+  }
 
-  return atomic_load(&consumer_calls) > 0 &&
+  return !timed_out && atomic_load(&consumer_calls) > 0 &&
          atomic_load(&consumer_success) > 0 && route_last_step == 0;
 }
 

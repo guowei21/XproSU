@@ -49,6 +49,7 @@ class AndroidGhostlockRepository(
         const val GltHeaderSize = 64
         const val GltMaxSize = 1 shl 20
         val GltMagic = byteArrayOf(0x47, 0x4C, 0x54, 0x32) // "GLT2"
+        const val KEY_TCP_ROUTE = "tcp_route"
     }
 
     private val appContext = context.applicationContext
@@ -57,6 +58,7 @@ class AndroidGhostlockRepository(
     private val cpuPairs = mutableListOf<CpuPair>()
     private var selectedPair: CpuPair? = null
     private var safeModeEnabled = false
+    private val prefs = appContext.getSharedPreferences("ghostlock_settings", Context.MODE_PRIVATE)
 
     init {
         buildCpuPairs()
@@ -72,6 +74,12 @@ class AndroidGhostlockRepository(
 
     override fun selectCpuPair(pair: CpuPair?) {
         selectedPair = pair
+    }
+
+    override fun tcpRouteEnabled(): Boolean = prefs.getBoolean(KEY_TCP_ROUTE, true)
+
+    override fun setTcpRouteEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_TCP_ROUTE, enabled).apply()
     }
 
     override suspend fun snapshot(): KernelSnapshot = KernelSnapshot(
@@ -288,7 +296,7 @@ class AndroidGhostlockRepository(
                     environment()["GHOSTLOCK_KSU_LOG"] = ksuLog.absolutePath
                     environment()["GHOSTLOCK_CORE"] = pair.primary.toString()
                     environment()["GHOSTLOCK_CONSUMER_CORE"] = pair.consumer.toString()
-                    environment()["GHOSTLOCK_ROUTE"] = "mcast"
+                    environment()["GHOSTLOCK_ROUTE"] = if (tcpRouteEnabled()) "tcp" else "mcast"
                     // Stage 2: the container is sealed with a key that only this
                     // handset's licence can produce, so the engine needs both the
                     // key and this device's fingerprint to open it.
