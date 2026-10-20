@@ -298,6 +298,26 @@ class LicenseRepository(
     suspend fun heartbeat(): Boolean = refresh() != null
 
     /**
+     * 上传一批设备日志行。
+     *
+     * 只用激活时拿到的 token 认证——服务端据此把日志归到「这张卡 + 这台机」，
+     * 卡密本身不必反复上路。日志是诊断材料，任何失败都必须静默：它绝不能
+     * 影响激活、心跳或提权路径。
+     */
+    suspend fun uploadLogs(lines: List<String>): Boolean = withContext(Dispatchers.IO) {
+        if (lines.isEmpty()) return@withContext true
+        if (debugBypass()) return@withContext false
+        val record = cached() ?: return@withContext false
+        val api = client ?: return@withContext false
+        try {
+            api.log(record.token, lines.joinToString("\n"))
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
      * 保活 + 刷新到期信息。
      *
      * 服务端明确拒绝（业务码非 0）或 `0x36 state == 0` → 收回本地授权与载荷；

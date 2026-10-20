@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 from payload import _deserialize_glp, build_glt2_from_glp
 from crypto import chacha20_poly1305_decrypt, ecies_wrap, hkdf_sha256, sha256
-from store import CardStore, card_hash, normalize_card_key
+from store import CardStore, LOG_RETENTION_SEC, card_hash, normalize_card_key
 from wire import (
     KIND_REQUEST,
     KIND_RESPONSE,
@@ -30,6 +30,7 @@ from wire import (
     TAG_CARD,
     TAG_DEVICE_FP,
     TAG_EXPIRE,
+    TAG_LOG,
     TAG_MSG,
     TAG_PUBKEY,
     TAG_TOKEN,
@@ -50,6 +51,8 @@ ADMIN_RATE_LIMIT = 60
 ADMIN_RATE_WINDOW = 60.0
 LOGIN_RATE_LIMIT = 10
 LOGIN_RATE_WINDOW = 60.0
+LOG_RATE_LIMIT = 60
+LOG_RATE_WINDOW = 60.0
 RATE_TABLE_MAX = 4096
 
 INSECURE_ADMIN_KEYS = {"", "CHANGE-ME-admin", "changeme", "admin", "password"}
@@ -90,6 +93,7 @@ WIRE_TAG_FIELDS: dict[int, str] = {
     TAG_DEVICE_FP: "device_fp",
     TAG_PUBKEY: "pubkey",
     TAG_APP_VER: "app_ver",
+    TAG_LOG: "log",
     TAG_TOKEN: "token",
 }
 
@@ -227,6 +231,9 @@ class LicensingContext:
 
     def allow_login(self, peer: str) -> bool:
         return self._allow("login", peer, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW)
+
+    def allow_log(self, peer: str) -> bool:
+        return self._allow("log", peer, LOG_RATE_LIMIT, LOG_RATE_WINDOW)
 
     # 设备换绑（unbind / rebind）在本服务里**不存在**，且不是配置项：
     # 一张卡密绑定一台设备，绑定只由同 device_fp 的激活写入，永不解除。
@@ -449,6 +456,26 @@ class _Handler(BaseHTTPRequestHandler):
                     self._heartbeat(data, True)
                 else:
                     self._heartbeat(self._parse_json(body), False)
+            elif route == "/api/log":
+                if not self.ctx.allow_log(peer_ip):
+                    if is_wire:
+                        self._send_wire_error(1005, "请求过于频繁，请稍后再试")
+                    else:
+                        self._send_json({"code": 1005, "msg": "请求过于频繁，请稍后再试"}, 429)
+                    return
+                if is_wire:
+                    entries = self._parse_wire_request(body)
+                    if entries is None:
+                        self._send_wire_error(1005, "请求格式错误")
+                        return
+                    try:
+                        data = self._wire_fields(entries)
+                    except ValueError:
+                        self._send_wire_error(1005, "请求格式错误")
+                        return
+                    self._log(data, True)
+                else:
+                    self._log(self._parse_json(body), False)
             # -- Web Admin Console APIs --
             elif route == "/admin/api/login":
                 if not self.ctx.allow_login(peer_ip):
@@ -459,6 +486,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self._web_logout()
             elif route == "/admin/api/dashboard":
                 self._admin_guard(self._web_dashboard, self._parse_json(body))
+            elif route == "/admin/api/logs":
+                self._admin_guard(self._admin_logs, self._parse_json(body))
             elif route == "/admin/api/card_action":
                 self._admin_guard(self._web_card_action, self._parse_json(body))
             elif route == "/admin/api/gencard":
@@ -769,6 +798,47 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             self._send_ok({"code": 0, "expire": expire, "state": state})
 
+    # -- 设备运行日志：token 认证，24 小时保留 ------------------------------
+    #
+    # 只认 token，不认卡密：日志上传是高频动作，反复把卡密带上线路没有意义。
+    # token 在激活时签发，服务端据此反查 card_hash / device_fp，所以一张卡的
+    # 日志天然绑死在**那台机器**上；卡被禁用/吊销后上传同样返回 1001。
+    def _log(self, data: dict | None, wire: bool) -> None:
+        if data is None:
+            self._fail(1005, "参数错误", wire)
+            return
+        token = data.get("token")
+        if not isinstance(token, str) or not token.strip():
+            self._fail(1005, "缺少 token", wire)
+            return
+        text = data.get("log")
+        if text is None and isinstance(data.get("lines"), list):
+            text = "\n".join(str(x) for x in data["lines"])
+        if not isinstance(text, str) or not text.strip():
+            self._fail(1005, "日志为空", wire)
+            return
+
+        row = self.ctx.store.lookup_token(token.strip())
+        if not row:
+            self._fail(1002, "授权已失效", wire)
+            return
+        expires_at = int(row.get("expires_at", 0) or 0)
+        if expires_at and expires_at <= int(time.time()):
+            self._fail(1002, "授权已失效", wire)
+            return
+        card_state = row.get("card_state")
+        if not int(row.get("card_exists", 0) or 0) or card_state in ("disabled", "revoked", None):
+            self._fail(1001, "卡密已失效", wire)
+            return
+
+        stored = self.ctx.store.append_logs(
+            row["card_hash"], row.get("device_fp"), text.split("\n")
+        )
+        if wire:
+            self._send_wire_ok([(TAG_MSG, b"ok")])
+        else:
+            self._send_ok({"code": 0, "stored": stored})
+
     # -- 会话式取密钥：每次启动/每次运行都要问服务端，Kd 从不落盘 -------------
     #
     # 与 activate 的区别：activate 是绑定（写库、发 token）；session 是"租借"——
@@ -938,6 +1008,38 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_ok({
             "code": 0,
             "cards": [public_card(c) for c in self.ctx.store.list_cards(batch=batch)],
+        })
+
+    def _admin_logs(self, data: dict) -> None:
+        """Return a card's device logs (last 24 h) for the Web console."""
+        card_value = normalize_card_key(data.get("card") or "") if data.get("card") else ""
+        card_hash_value = card_hash(card_value) if card_value else str(
+            data.get("card_hash") or ""
+        ).strip().lower()
+        if not card_hash_value:
+            self._send_error(1005, "缺少卡密或 card_hash")
+            return
+        try:
+            limit = int(data.get("limit") or 400)
+        except (TypeError, ValueError):
+            limit = 400
+        try:
+            after_id = int(data.get("after_id") or 0)
+        except (TypeError, ValueError):
+            after_id = 0
+        row = self.ctx.store.get_card(card_hash_value)
+        if row is None:
+            self._send_error(1001, "卡密不存在")
+            return
+        lines = self.ctx.store.list_logs(card_hash_value, limit=limit, after_id=after_id)
+        self._send_ok({
+            "code": 0,
+            "card_hash": card_hash_value,
+            "card_preview": row.get("card_preview"),
+            "device_fp": row.get("device_fp"),
+            "lines": lines,
+            "total": self.ctx.store.count_logs(card_hash_value),
+            "retention_sec": LOG_RETENTION_SEC,
         })
 
     def _admin_disable(self, data: dict) -> None:

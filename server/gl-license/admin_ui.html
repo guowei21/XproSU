@@ -1023,6 +1023,25 @@ tr:hover td {
   </div>
 </div>
 
+<!-- ==================== 抽屉 4：设备运行日志 ==================== -->
+<div class="modal-mask" id="modal-logs" onclick="maskCloseLogs(event)">
+  <div class="modal-sheet" style="max-width:900px;">
+    <div class="sheet-handle"></div>
+    <div class="modal-head">
+      <div class="modal-title" id="log-title">📜 运行日志</div>
+      <button class="btn btn-ghost btn-sm" onclick="closeLogs()">✕</button>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;line-height:1.5;">
+      仅保留最近 24 小时；打开期间每 5 秒自动追加。日志由 App 在已激活状态下实时上传。
+    </div>
+    <pre id="log-view" style="background:rgba(7,10,18,0.75);border:1px solid var(--border);border-radius:12px;padding:12px;max-height:58vh;overflow:auto;font-size:11.5px;line-height:1.55;white-space:pre-wrap;word-break:break-all;margin:0;"></pre>
+    <div style="display:flex;gap:10px;margin-top:12px;">
+      <button class="btn btn-ghost" style="flex:1;" onclick="loadLogs(true)">刷新</button>
+      <button class="btn btn-primary" style="flex:1;" onclick="copyText(document.getElementById('log-view').innerText)">复制日志</button>
+    </div>
+  </div>
+</div>
+
 <script>
 let currentCards = [];
 let currentStateFilter = '';
@@ -1137,6 +1156,69 @@ function fmtTime(ts) {
   const d = new Date(ts * 1000);
   const p = n => String(n).padStart(2, '0');
   return `${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/* ==================== device logs ==================== */
+let logTimer = null;
+let logCardHash = '';
+let logLastId = 0;
+
+function maskCloseLogs(e) { if (e.target.id === 'modal-logs') closeLogs(); }
+
+function openLogs(cardHash, label) {
+  logCardHash = cardHash;
+  logLastId = 0;
+  document.getElementById('log-title').textContent =
+    '📜 运行日志 · ' + (label || cardHash.slice(0, 12));
+  const box = document.getElementById('log-view');
+  box.textContent = '加载中…';
+  openSheet('modal-logs');
+  loadLogs(true);
+  if (logTimer) clearInterval(logTimer);
+  logTimer = setInterval(() => loadLogs(false), 5000);
+}
+
+function closeLogs() {
+  closeSheet('modal-logs');
+  if (logTimer) { clearInterval(logTimer); logTimer = null; }
+  logCardHash = '';
+}
+
+async function loadLogs(reset) {
+  if (!logCardHash) return;
+  const box = document.getElementById('log-view');
+  let res;
+  try {
+    res = await api('/admin/api/logs', {
+      card_hash: logCardHash,
+      limit: 400,
+      after_id: reset ? 0 : logLastId
+    });
+  } catch (e) {
+    return;
+  }
+  if (res.code !== 0) {
+    box.textContent = res.msg || '读取失败';
+    return;
+  }
+  const lines = res.lines || [];
+  if (reset) box.textContent = '';
+  if (reset && lines.length === 0) {
+    box.textContent = '暂无日志（App 需已激活并运行过；仅保留 24 小时）';
+    return;
+  }
+  // 日志是客户端可控文本，必须当纯文本插入，不能拼 HTML。
+  lines.forEach(l => {
+    const row = document.createElement('div');
+    const ts = document.createElement('span');
+    ts.style.color = 'var(--text-muted)';
+    ts.textContent = fmtTime(l.ts) + '  ';
+    row.appendChild(ts);
+    row.appendChild(document.createTextNode(l.line));
+    box.appendChild(row);
+    logLastId = l.id;
+  });
+  box.scrollTop = box.scrollHeight;
 }
 
 function fmtExpire(ts) {
@@ -1262,6 +1344,7 @@ function renderLists(cards) {
           ${c.state !== 'disabled' && c.state !== 'revoked' ? `<button class="btn btn-amber btn-sm" onclick="cardAction('disable','${c.card_hash}')">禁用踢线</button>` : ''}
           ${c.state === 'disabled' ? `<button class="btn btn-emerald btn-sm" onclick="cardAction('enable','${c.card_hash}')">恢复启用</button>` : ''}
           ${c.device_fp ? '<span class="chip" title="一张卡密绑定一台设备，绑定不可解除">🔒 已绑机</span>' : ''}
+          <button class="btn btn-ghost btn-sm" onclick="openLogs('${c.card_hash}','${c.card_preview || ''}')">日志</button>
           ${c.state !== 'revoked' ? `<button class="btn btn-rose btn-sm" onclick="cardAction('revoke','${c.card_hash}')">吊销</button>` : ''}
           <button class="btn btn-rose btn-sm" onclick="cardAction('delete','${c.card_hash}')">删卡</button>
         </div>
@@ -1304,6 +1387,7 @@ function renderLists(cards) {
         ${c.state !== 'disabled' && c.state !== 'revoked' ? `<button class="btn btn-amber btn-sm" onclick="cardAction('disable','${c.card_hash}')">禁用踢线</button>` : ''}
         ${c.state === 'disabled' ? `<button class="btn btn-emerald btn-sm" onclick="cardAction('enable','${c.card_hash}')">恢复启用</button>` : ''}
         ${c.device_fp ? '<span class="chip" title="一张卡密绑定一台设备，绑定不可解除">🔒 已绑机</span>' : ''}
+        <button class="btn btn-ghost btn-sm" onclick="openLogs('${c.card_hash}','${c.card_preview || ''}')">日志</button>
         ${c.state !== 'revoked' ? `<button class="btn btn-rose btn-sm" onclick="cardAction('revoke','${c.card_hash}')">吊销</button>` : ''}
         <button class="btn btn-rose btn-sm" onclick="cardAction('delete','${c.card_hash}')">删卡</button>
       </div>

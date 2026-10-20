@@ -8,6 +8,7 @@ Reads the same config.json as server.py.
     python admin.py enable  --card XXXXX-XXXXX-XXXXX-XXXXX
     python admin.py revoke  --card XXXXX-XXXXX-XXXXX-XXXXX
     python admin.py delete  --card XXXXX-XXXXX-XXXXX-XXXXX
+    python admin.py logs    --card XXXXX-XXXXX-XXXXX-XXXXX [--limit 400]
     python admin.py build-payload --table <json path>
 """
 from __future__ import annotations
@@ -16,6 +17,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 from payload import build_payload
 from server import load_config, resolve_path
@@ -184,6 +186,21 @@ def cmd_build_payload(cfg: dict, args) -> int:
     return 0
 
 
+def cmd_logs(cfg: dict, args) -> int:
+    ch = _resolve_card_hash(args.card)
+    store = _store(cfg)
+    rows = store.list_logs(ch, limit=args.limit)
+    total = store.count_logs(ch)
+    if not rows:
+        print(f"(no logs in the last 24h) card_hash={ch}")
+        return 0
+    for row in rows:
+        stamp = time.strftime("%m-%d %H:%M:%S", time.localtime(int(row["ts"])))
+        print(f"{stamp}  {row['line']}")
+    print(f"--- {len(rows)} line(s) shown, {total} kept (24h), card_hash={ch}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="admin.py", description="XproSU license admin tool")
     parser.add_argument("--config", default=os.path.join(BASE_DIR, "config.json"), help="config.json path")
@@ -218,6 +235,11 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--card", required=True, help="card plaintext OR 64-hex card_hash")
         p.set_defaults(func=fn)
+
+    p_logs = sub.add_parser("logs", help="show a card's device logs (last 24 h)")
+    p_logs.add_argument("--card", required=True, help="card plaintext OR 64-hex card_hash")
+    p_logs.add_argument("--limit", type=int, default=400)
+    p_logs.set_defaults(func=cmd_logs)
 
     p_enc = sub.add_parser("encrypt-payload", help="wrap payload.bin into encrypted-at-rest payload.bin.enc")
     p_enc.add_argument("--input", default=None)

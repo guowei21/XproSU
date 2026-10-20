@@ -43,6 +43,7 @@ object GlBlob {
     const val T_DEVICE_FP = 0x22
     const val T_PUBKEY = 0x23
     const val T_APP_VER = 0x24
+    const val T_LOG = 0x25
     const val T_TOKEN = 0x35
 
     // ── 线路标签（响应）────────────────────────────────────────────────

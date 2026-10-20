@@ -85,8 +85,29 @@ _AUDIT_INDEX_DDL = (
     "ON activation_audit(card_hash, ts);"
 )
 
+_DEVICE_LOGS_DDL = """
+CREATE TABLE IF NOT EXISTS device_logs (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_hash TEXT NOT NULL,
+    device_fp TEXT,
+    ts        INTEGER NOT NULL,
+    line      TEXT NOT NULL
+);
+"""
+
+_DEVICE_LOGS_INDEX_DDL = """
+CREATE INDEX IF NOT EXISTS idx_device_logs_card_ts ON device_logs(card_hash, ts);
+CREATE INDEX IF NOT EXISTS idx_device_logs_ts ON device_logs(ts);
+"""
+
 TOKEN_TTL = 30 * 86400
 SESSION_TTL = 7 * 86400
+
+# 运行日志：只保留 24 小时，单次最多 200 行、单行 4096 字符、单卡上限 5 万行。
+LOG_RETENTION_SEC = 24 * 3600
+LOG_MAX_LINES_PER_REQUEST = 200
+LOG_MAX_LINE_CHARS = 4096
+LOG_MAX_LINES_PER_CARD = 50000
 
 STATE_UNBOUND = "unbound"
 STATE_BOUND = "bound"
@@ -163,7 +184,8 @@ class CardStore:
         self.db_path = db_path
         with self._connect() as conn:
             conn.executescript(
-                _CARDS_DDL + _TOKENS_DDL + _ADMIN_SESSIONS_DDL + _AUDIT_DDL + _AUDIT_INDEX_DDL
+                _CARDS_DDL + _TOKENS_DDL + _ADMIN_SESSIONS_DDL + _AUDIT_DDL
+                + _AUDIT_INDEX_DDL + _DEVICE_LOGS_DDL + _DEVICE_LOGS_INDEX_DDL
             )
             self._migrate(conn)
 
@@ -444,6 +466,7 @@ class CardStore:
     def delete_card(self, card_hash_value: str) -> bool:
         with self._connect() as conn:
             conn.execute("DELETE FROM tokens WHERE card_hash = ?", (card_hash_value,))
+            conn.execute("DELETE FROM device_logs WHERE card_hash = ?", (card_hash_value,))
             cur = conn.execute("DELETE FROM cards WHERE card_hash = ?", (card_hash_value,))
             return cur.rowcount > 0
 
@@ -586,6 +609,85 @@ class CardStore:
         with self._connect() as conn:
             cur = conn.execute("DELETE FROM tokens WHERE expires_at <= ?", (int(time.time()),))
         return cur.rowcount
+
+    # -- device logs (24 h, per card) ---------------------------------------
+
+    def append_logs(
+        self,
+        card_hash_value: str,
+        device_fp: str | None,
+        lines: list[str],
+        ts: int | None = None,
+    ) -> int:
+        """Append device log lines and enforce both retention limits.
+
+        The table is time-boxed (``LOG_RETENTION_SEC``) and count-boxed
+        (``LOG_MAX_LINES_PER_CARD``) so a noisy or hostile client cannot grow
+        the database without bound.  Pruning happens on write, so an idle
+        service does not need a background thread.
+        """
+        now = int(ts if ts is not None else time.time())
+        cleaned: list[str] = []
+        for line in lines:
+            if not isinstance(line, str):
+                continue
+            text = line.replace("\r", "").replace("\x00", "")
+            if not text.strip():
+                continue
+            cleaned.append(text[:LOG_MAX_LINE_CHARS])
+            if len(cleaned) >= LOG_MAX_LINES_PER_REQUEST:
+                break
+        if not cleaned:
+            return 0
+
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT INTO device_logs (card_hash, device_fp, ts, line) VALUES (?, ?, ?, ?)",
+                [(card_hash_value, device_fp, now, text) for text in cleaned],
+            )
+            conn.execute("DELETE FROM device_logs WHERE ts < ?", (now - LOG_RETENTION_SEC,))
+            conn.execute(
+                "DELETE FROM device_logs WHERE card_hash = ? AND id <= ("
+                "SELECT id FROM device_logs WHERE card_hash = ? ORDER BY id DESC LIMIT 1 OFFSET ?)",
+                (card_hash_value, card_hash_value, LOG_MAX_LINES_PER_CARD),
+            )
+        return len(cleaned)
+
+    def prune_logs(self, older_than: int = LOG_RETENTION_SEC) -> int:
+        cutoff = int(time.time()) - int(older_than)
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM device_logs WHERE ts < ?", (cutoff,))
+        return cur.rowcount
+
+    def count_logs(self, card_hash_value: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM device_logs WHERE card_hash = ?",
+                (card_hash_value,),
+            ).fetchone()
+        return int(row["n"] if row else 0)
+
+    def list_logs(
+        self, card_hash_value: str, limit: int = 400, after_id: int = 0,
+    ) -> list[dict]:
+        """Return a card's log tail (ascending by id) or everything after ``after_id``."""
+        self.prune_logs()
+        limit = max(1, min(int(limit), 2000))
+        with self._connect() as conn:
+            if after_id:
+                rows = conn.execute(
+                    "SELECT id, ts, line FROM device_logs "
+                    "WHERE card_hash = ? AND id > ? ORDER BY id ASC LIMIT ?",
+                    (card_hash_value, int(after_id), limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, ts, line FROM device_logs "
+                    "WHERE card_hash = ? ORDER BY id DESC LIMIT ?",
+                    (card_hash_value, limit),
+                ).fetchall()
+                rows = list(reversed(rows))
+        return [dict(row) for row in rows]
 
     def prune_sessions(self, keep_per_user: int = 10) -> int:
         """Drop expired admin sessions and keep only the newest N per user.

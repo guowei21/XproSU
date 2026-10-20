@@ -84,6 +84,26 @@ class LicenseClient(
             ),
         )
 
+    /**
+     * 上传本次运行的日志行。
+     *
+     * 只带 token：服务端据此反查卡密与设备指纹，把日志绑到「这张卡 + 这台机」。
+     * 卡密不在线路上重复出现，封卡后上传与心跳一样立即被拒。
+     */
+    fun log(token: String, text: String): GlBlob.Decoded =
+        post(
+            path = PATH_LOG,
+            body = GlBlob.encode(
+                magic = GlBlob.MAGIC_WIRE,
+                kind = GlBlob.KIND_REQUEST,
+                code = 0,
+                entries = listOf(
+                    GlBlob.T_TOKEN to GlBlob.str(token),
+                    GlBlob.T_LOG to GlBlob.str(text),
+                ),
+            ),
+        )
+
     private fun post(path: String, body: ByteArray): GlBlob.Decoded {
         val url = try {
             URL(base + path)
@@ -160,6 +180,7 @@ class LicenseClient(
         const val PATH_ACTIVATE = "/api/activate"
         const val PATH_HEARTBEAT = "/api/heartbeat"
         const val PATH_SESSION = "/api/session"
+        const val PATH_LOG = "/api/log"
 
         /** 响应体硬上限：正常激活响应 1 KB 出头，2 MiB 不可能误伤。 */
         const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024

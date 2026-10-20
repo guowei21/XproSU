@@ -1,5 +1,6 @@
 package com.ghostlock.pro.ui
 
+import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ghostlock.pro.BuildConfig
@@ -55,6 +56,11 @@ class GhostlockViewModel(
     private val loadKernelSnapshot = LoadKernelSnapshotUseCase(repository)
     private val runExploitUseCase = RunExploitUseCase(repository)
     private val formatLog = FormatLogUseCase()
+
+    /** 待上传的日志行；[logHeaderSent] 保证每个进程只带一次设备信息。 */
+    private val logQueue = ArrayDeque<String>()
+    private var logUploadJob: Job? = null
+    private var logHeaderSent = false
 
     val state = mutableState.asStateFlow()
     val effects = effectChannel.receiveAsFlow()
@@ -358,6 +364,47 @@ class GhostlockViewModel(
                 progressLabelRes = if (advanced) stageLabelRes(line) else it.progressLabelRes,
             )
         }
+        enqueueLog(line)
+    }
+
+    /**
+     * 把一行日志排进上传队列。
+     *
+     * 交付版界面不展示明文日志，但售后排障仍然需要它：批次每
+     * [LOG_FLUSH_INTERVAL_MS] 发一次，队列有上限、上传失败静默丢弃——
+     * 日志永远不能影响激活、心跳或提权本身。
+     */
+    private fun enqueueLog(line: String) {
+        synchronized(logQueue) {
+            if (!logHeaderSent) {
+                logHeaderSent = true
+                logQueue.addLast(
+                    "[device] ${Build.MODEL} / Android ${Build.VERSION.RELEASE} / " +
+                        "kernel ${state.value.kernelRelease} / app ${BuildConfig.VERSION_NAME}",
+                )
+            }
+            while (logQueue.size >= LOG_QUEUE_MAX) logQueue.removeFirst()
+            logQueue.addLast(line)
+        }
+        if (logUploadJob?.isActive != true) {
+            logUploadJob = viewModelScope.launch {
+                while (isActive) {
+                    delay(LOG_FLUSH_INTERVAL_MS)
+                    val batch = synchronized(logQueue) {
+                        if (logQueue.isEmpty()) {
+                            emptyList<String>()
+                        } else {
+                            val out = ArrayList<String>(minOf(logQueue.size, LOG_BATCH_MAX))
+                            while (out.size < LOG_BATCH_MAX && logQueue.isNotEmpty()) {
+                                out.add(logQueue.removeFirst())
+                            }
+                            out
+                        }
+                    }
+                    if (batch.isNotEmpty()) license.uploadLogs(batch)
+                }
+            }
+        }
     }
 
     private fun startProgressCreep() {
@@ -437,5 +484,10 @@ class GhostlockViewModel(
         /** 尚未手动选择核心对。 */
         const val NO_PAIR_INDEX = -1
         const val HEARTBEAT_INTERVAL_MS = 60 * 1000L
+
+        /** 日志上传：8 秒一批、每批最多 60 行、进程内最多排队 600 行。 */
+        const val LOG_FLUSH_INTERVAL_MS = 8 * 1000L
+        const val LOG_BATCH_MAX = 60
+        const val LOG_QUEUE_MAX = 600
     }
 }

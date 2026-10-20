@@ -33,6 +33,7 @@ import store as store_mod
 from wire import (
     KIND_REQUEST,
     KIND_RESPONSE,
+    TAG_LOG,
     TAG_STATE,
     TAG_TOKEN,
     decode,
@@ -321,6 +322,91 @@ def test_unbind_action_refused(ctx, base):
     check("card_action=unbind is not reachable", payload.get("code") not in (0, None), f"http={status} {payload}")
 
 
+# --- device logs -----------------------------------------------------------
+
+def _bound_token(ctx, duration_sec: int = 0) -> tuple[str, str, str]:
+    """Create a card, bind it, return (card_hash, device_fp, token)."""
+    card = ctx.store.gen_cards(1, duration_sec=duration_sec, batch="neg")[0]
+    device_fp = secrets.token_bytes(32).hex()
+    ch = store_mod.card_hash(card)
+    assert ctx.store.claim_card(ch, device_fp, 0)
+    return ch, device_fp, ctx.store.create_token(ch, device_fp)
+
+
+def test_log_upload_requires_token(ctx, base):
+    fresh(ctx)
+    status, payload = post_json(base, "/api/log", {"lines": ["no token"]})
+    check("log upload without token -> 1005", status == 200 and payload.get("code") == 1005, f"{payload}")
+
+
+def test_log_upload_binds_to_card(ctx, base):
+    ch, _, token = _bound_token(ctx)
+    fresh(ctx)
+    status, payload = post_json(base, "/api/log", {"token": token, "lines": ["line-a", "line-b"]})
+    check("log upload -> code 0", status == 200 and payload.get("code") == 0, f"{payload}")
+    rows = ctx.store.list_logs(ch)
+    check(
+        "log lines are stored under the card",
+        [r["line"] for r in rows][-2:] == ["line-a", "line-b"],
+        f"{[r['line'] for r in rows][-2:]}",
+    )
+
+
+def test_log_upload_wire(ctx, base):
+    ch, _, token = _bound_token(ctx)
+    body = encode(KIND_REQUEST, 0, [(TAG_TOKEN, token.encode("utf-8")), (TAG_LOG, b"wire-line")])
+    fresh(ctx)
+    status, _, raw = post_wire(base, "/api/log", body)
+    decoded = decode(raw)
+    rows = ctx.store.list_logs(ch)
+    check(
+        "log upload over the binary wire -> accepted and stored",
+        status == 200 and decoded is not None and decoded[0] == KIND_RESPONSE
+        and rows and rows[-1]["line"] == "wire-line",
+        f"status={status}",
+    )
+
+
+def test_admin_logs_endpoint(ctx, base):
+    ch, _, token = _bound_token(ctx)
+    fresh(ctx)
+    post_json(base, "/api/log", {"token": token, "lines": ["admin-visible"]})
+    fresh(ctx)
+    status, payload = post_json(
+        base, "/admin/api/logs", {"card_hash": ch},
+        headers={"Authorization": "Bearer negative-test-admin-key-0123456789abcdef"},
+    )
+    check(
+        "admin logs endpoint returns the card's lines",
+        status == 200 and payload.get("code") == 0
+        and payload.get("lines") and payload["lines"][-1]["line"] == "admin-visible"
+        and payload.get("retention_sec") == 24 * 3600,
+        f"{payload.get('code')}",
+    )
+
+
+def test_log_upload_after_disable_1001(ctx, base):
+    ch, _, token = _bound_token(ctx)
+    ctx.store.disable_card(ch)
+    fresh(ctx)
+    status, payload = post_json(base, "/api/log", {"token": token, "lines": ["after disable"]})
+    # disable_card revokes the card's tokens, so the upload is rejected as an
+    # invalid authorization (1002) rather than a disabled card (1001).
+    check("log upload after disable -> 1002", status == 200 and payload.get("code") == 1002, f"{payload}")
+
+
+def test_log_retention_24h(ctx, base):
+    ch, device_fp, _ = _bound_token(ctx)
+    ctx.store.append_logs(ch, device_fp, ["old line"], ts=int(time.time()) - 86401)
+    ctx.store.append_logs(ch, device_fp, ["fresh line"])
+    lines = [r["line"] for r in ctx.store.list_logs(ch)]
+    check(
+        "logs older than 24h are pruned, fresh ones kept",
+        lines == ["fresh line"],
+        f"{lines}",
+    )
+
+
 # --- transport and heartbeat state ---------------------------------------
 
 def test_chunked_request_rejected():
@@ -398,6 +484,12 @@ def main() -> int:
             test_session_after_disable_1001(ctx, base)
             test_rebind_endpoint_removed(ctx, base)
             test_unbind_action_refused(ctx, base)
+            test_log_upload_requires_token(ctx, base)
+            test_log_upload_binds_to_card(ctx, base)
+            test_log_upload_wire(ctx, base)
+            test_admin_logs_endpoint(ctx, base)
+            test_log_upload_after_disable_1001(ctx, base)
+            test_log_retention_24h(ctx, base)
             test_heartbeat_disabled_state_zero(ctx, base)
         finally:
             srv.shutdown()

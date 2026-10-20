@@ -80,6 +80,9 @@ app **不再内置任何偏移数据**：`assets/` 里没有载荷，全部由�
   心跳（`/api/heartbeat`）在传输失败时按本地到期时间判定，避免网络抖动误伤。
 - **日志分级**：Debug 显示明文运行日志；Release 只显示百分比 + 阶段名，
   R8 + 资源收缩会把日志字符串一并从 APK 删除。
+- **设备日志（24h）**：App 每 8 秒把运行日志批次经 `token` 上传到 `/api/log`，
+  服务端按 `card_hash + device_fp` 归档；后台每张卡密都有「日志」入口，只保留
+  最近 24 小时，封卡后上传立即被拒。
 
 完整协议见 [`docs/stage2-protocol.md`](docs/stage2-protocol.md)；
 **构建与部署步骤见 [`docs/build-and-deploy.md`](docs/build-and-deploy.md)**；

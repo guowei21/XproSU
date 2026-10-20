@@ -29,6 +29,7 @@
 | **指纹脱敏（新）** | 任何管理端响应都不再回传原始 `device_fp`（后台/JSON API/CLI 只给 `device_fp_mask`＝`SHA-256(小写 hex)[:16].upper()`，与 App 授权卡片"设备码"逐字节一致）；dashboard 也不再回明文 `admin_key`，只回指纹 |
 | **激活审计（新）** | 新增 `activation_audit` 表与 `cards.pubkey_rotations / prev_pubkey / last_pubkey_at`：每次绑定、换绑、拒绝都落一行（`bound`/`rotated`/`rejected`，含 IP、UA、旧公钥） |
 | 线路 tag | 响应新增 `0x36` = state(u8)；其余 tag 表见 `wire.py` |
+| **设备日志（新）** | `POST /api/log`（wire 或 JSON）：只认激活时签发的 `token`，服务端反查 `card_hash` / `device_fp`，把日志绑到「这张卡 + 这台机」；卡被禁用/吊销后立即 `1001`。**只保留 24 小时**，单次最多 200 行、单行 4096 字符、单卡上限 5 万行。后台卡密行新增「日志」入口，`/admin/api/logs` 读取 |
 
 
 ## 文件清单
@@ -145,6 +146,7 @@ python admin.py gen --type permanent --count 10           # 生成卡密
 python admin.py list                                      # 列表
 # 换机请走"吊销 + 重新发卡"：绑定不可解除（本服务没有 rebind/unbind）
 python admin.py build-payload --table .\table.json        # 生成 payload.bin
+python admin.py logs --card XXXXX-XXXXX-XXXXX-XXXXX      # 查看该卡最近 24h 的设备日志
 ```
 
 HTTP 管理接口（`Authorization: Bearer <admin_key>`）：
@@ -152,6 +154,7 @@ HTTP 管理接口（`Authorization: Bearer <admin_key>`）：
 ```
 POST /api/admin/gencard  {"type":"permanent", "count":10}
 POST /api/admin/list     {}
+POST /admin/api/logs     {"card_hash":"<64hex>", "limit":400, "after_id":0}
 ```
 
 ## 7. App 二进制线路与 curl JSON 调试
