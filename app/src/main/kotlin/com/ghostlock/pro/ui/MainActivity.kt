@@ -27,7 +27,7 @@ class MainActivity : ComponentActivity() {
         viewModelFactory {
             initializer {
                 val app = application as GhostlockApplication
-                GhostlockViewModel(app.createRepository(), app.license)
+                GhostlockViewModel(app.createRepository(), app.license, app.deviceLog)
             }
         }
     }
@@ -116,6 +116,7 @@ private fun GhostlockRoute(
             override fun onCloseExecutionSheet() = viewModel.onCloseExecutionSheet()
             override fun onCopyLogs() = viewModel.copyLogs()
             override fun onClearLogs() = viewModel.clearLogs()
+            override fun onUploadLogs() = viewModel.uploadDiagnosticLogs()
             override fun onOpenActivateDialog() = viewModel.openActivateDialog()
             override fun onSafeModeChanged(enabled: Boolean) = viewModel.toggleSafeMode(enabled)
             override fun onCpuPairSelected(index: Int) = viewModel.onCpuPairSelected(index)

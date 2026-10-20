@@ -56,4 +56,11 @@
     <string name="action_tap_activate">Tap to activate</string>
     <string name="action_reactivate">Change key</string>
     <string name="run_unsupported_version">This version is not supported; please downgrade</string>
+
+    <string name="diagnostics_upload">Diagnostic logs</string>
+    <string name="diagnostics_upload_summary">Upload the last run log of this device (may include lines already sent; kept for 24h)</string>
+    <string name="diagnostics_upload_action">Upload now</string>
+    <string name="diagnostics_upload_empty">No local log to upload</string>
+    <string name="diagnostics_uploaded">Log uploaded</string>
+    <string name="diagnostics_upload_failed">Upload failed — check network or license</string>
 </resources>

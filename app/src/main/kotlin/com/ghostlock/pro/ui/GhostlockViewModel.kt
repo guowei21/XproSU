@@ -13,6 +13,7 @@ import com.ghostlock.pro.domain.usecase.LoadKernelSnapshotUseCase
 import com.ghostlock.pro.domain.usecase.RunExploitUseCase
 import com.ghostlock.pro.license.ActivationResult
 import com.ghostlock.pro.license.CardKey
+import com.ghostlock.pro.license.DeviceLogStore
 import com.ghostlock.pro.license.LicenseRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,6 +42,7 @@ sealed interface GhostlockEffect {
 class GhostlockViewModel(
     private val repository: GhostlockRepository,
     private val license: LicenseRepository,
+    private val deviceLog: DeviceLogStore,
 ) : ViewModel() {
     private val effectChannel = Channel<GhostlockEffect>(Channel.BUFFERED)
     private val mutableState = MutableStateFlow(
@@ -141,6 +143,8 @@ class GhostlockViewModel(
                 val code = runExploitUseCase(repository.selectedCpuPair(), ::appendLog, session)
                 appendLog(if (code == 0) "result: exploit completed" else "result: exploit failed (exit code=$code)")
                 appendLog("exit code=$code")
+                // 运行结束立即把队列清空，别把最后几行留到 8 秒窗口里。
+                flushLogsNow()
                 mutableState.update {
                     it.copy(
                         lastRunFailed = code != 0,
@@ -171,6 +175,49 @@ class GhostlockViewModel(
     }
 
     fun clearLogs() = mutableState.update { it.copy(logLines = emptyList()) }
+
+    /**
+     * 手动补交本机日志。
+     *
+     * 典型场景：运行卡在某一阶段、机器被强制重启，自动上传的队列没来得及清空。
+     * 这些行已经逐行落盘（[DeviceLogStore]），重启后点一下就补交。
+     */
+    fun uploadDiagnosticLogs() {
+        viewModelScope.launch {
+            val lines = withContext(Dispatchers.IO) { deviceLog.readTail(LOG_MANUAL_MAX_LINES) }
+            if (lines.isEmpty()) {
+                send(GhostlockEffect.Toast(R.string.diagnostics_upload_empty))
+                return@launch
+            }
+            if (!license.isActivated()) {
+                send(GhostlockEffect.Toast(R.string.diagnostics_upload_failed))
+                return@launch
+            }
+            var ok = true
+            lines.chunked(LOG_SERVER_BATCH_MAX).forEach { chunk ->
+                if (!license.uploadLogs(chunk)) ok = false
+            }
+            send(
+                GhostlockEffect.Toast(
+                    if (ok) R.string.diagnostics_uploaded else R.string.diagnostics_upload_failed,
+                ),
+            )
+        }
+    }
+
+    /** 把当前队列里剩下的日志立刻发出去（运行结束/收尾时调用）。 */
+    private suspend fun flushLogsNow() {
+        val batch = synchronized(logQueue) {
+            if (logQueue.isEmpty()) {
+                emptyList<String>()
+            } else {
+                val out = ArrayList<String>(logQueue.size)
+                while (logQueue.isNotEmpty()) out.add(logQueue.removeFirst())
+                out
+            }
+        }
+        if (batch.isNotEmpty()) license.uploadLogs(batch)
+    }
 
     // 识别码不再对外展示，复制动作随之移除；保留 action 空实现兼容动作层。
 
@@ -375,17 +422,21 @@ class GhostlockViewModel(
      * 日志永远不能影响激活、心跳或提权本身。
      */
     private fun enqueueLog(line: String) {
+        val persist = ArrayList<String>(2)
         synchronized(logQueue) {
             if (!logHeaderSent) {
                 logHeaderSent = true
-                logQueue.addLast(
-                    "[device] ${Build.MODEL} / Android ${Build.VERSION.RELEASE} / " +
-                        "kernel ${state.value.kernelRelease} / app ${BuildConfig.VERSION_NAME}",
-                )
+                val header = "[device] ${Build.MODEL} / Android ${Build.VERSION.RELEASE} / " +
+                    "kernel ${state.value.kernelRelease} / app ${BuildConfig.VERSION_NAME}"
+                logQueue.addLast(header)
+                persist.add(header)
             }
             while (logQueue.size >= LOG_QUEUE_MAX) logQueue.removeFirst()
             logQueue.addLast(line)
+            persist.add(line)
         }
+        // 每行都先落盘：进程被杀之后，这几行还留在本地等用户手动补交。
+        persist.forEach(deviceLog::append)
         if (logUploadJob?.isActive != true) {
             logUploadJob = viewModelScope.launch {
                 while (isActive) {
@@ -489,5 +540,9 @@ class GhostlockViewModel(
         const val LOG_FLUSH_INTERVAL_MS = 8 * 1000L
         const val LOG_BATCH_MAX = 60
         const val LOG_QUEUE_MAX = 600
+
+        /** 手动补交：本地最多取 800 行，服务端单次上限 200 行。 */
+        const val LOG_MANUAL_MAX_LINES = 800
+        const val LOG_SERVER_BATCH_MAX = 200
     }
 }

@@ -3,6 +3,7 @@ package com.ghostlock.pro
 import android.app.Application
 import com.ghostlock.pro.data.AndroidGhostlockRepository
 import com.ghostlock.pro.domain.repository.GhostlockRepository
+import com.ghostlock.pro.license.DeviceLogStore
 import com.ghostlock.pro.license.LicenseClient
 import com.ghostlock.pro.license.LicenseRepository
 
@@ -20,6 +21,9 @@ class GhostlockApplication : Application() {
     val license: LicenseRepository by lazy {
         LicenseRepository(this, createLicenseClient())
     }
+
+    /** 本机日志落盘（供「跑到一半死机」之后手动补交）。 */
+    val deviceLog: DeviceLogStore by lazy { DeviceLogStore(this) }
 
     fun createRepository(): GhostlockRepository = AndroidGhostlockRepository(
         context = this,

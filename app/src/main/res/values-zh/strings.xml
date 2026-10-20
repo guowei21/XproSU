@@ -59,4 +59,11 @@
     <string name="action_reactivate">更换卡密</string>
     <!-- 运行失败且当前版本不支持 -->
     <string name="run_unsupported_version">当前版本不支持，请降级使用</string>
+
+    <string name="diagnostics_upload">诊断日志</string>
+    <string name="diagnostics_upload_summary">把本机最近一次运行日志上传到服务器（可能含已自动上传的部分，仅保留 24 小时）</string>
+    <string name="diagnostics_upload_action">立即上传</string>
+    <string name="diagnostics_upload_empty">暂无可上传的本地日志</string>
+    <string name="diagnostics_uploaded">日志已上传</string>
+    <string name="diagnostics_upload_failed">上传失败，请检查网络或授权状态</string>
 </resources>
