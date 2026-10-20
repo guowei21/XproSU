@@ -66,4 +66,5 @@
     <string name="diagnostics_upload_empty">No local log to upload</string>
     <string name="diagnostics_uploaded">Log uploaded</string>
     <string name="diagnostics_upload_failed">Upload failed — check network or license</string>
+    <string name="diagnostics_offline">Offline build: logs stay on this device</string>
 </resources>

@@ -101,20 +101,18 @@ static void gl_reject_verbose(const char *fmt, ...) {
 #define GLT_MAX_FILE (1u << 20)
 #define GLP_MAX_BODY (1u << 18)
 
-#ifdef GL_VERBOSE
 #define GLT_MAGIC "GLT1"
 #define GLT_VERSION 1u
 #define GLT_FLAG_OBFUSCATED 0x01u
 #define GLT_HDR_SIZE 16u
 
 /* Stage-1 obfuscation key.  NOT a secret: it is compiled into the binary and a
- * disassembler will find it.  Present only in GL_VERBOSE builds, so the
- * release engine has no fixed key at all. */
+ * disassembler will find it.  The offline branch ships a GLT1 container so the
+ * engine can run without a licence server; this key only defeats `strings`. */
 static const uint8_t GLT_KEY[32] = {
     0x9e, 0x37, 0x4b, 0x12, 0x7c, 0xa5, 0x0d, 0x66, 0x21, 0x8f, 0xd3,
     0x5a, 0xb4, 0x70, 0x1c, 0xe9, 0x53, 0x2d, 0x88, 0xaf, 0x06, 0x91,
     0x4e, 0x3b, 0xc2, 0x65, 0x19, 0xf7, 0x08, 0xda, 0x72, 0x4d};
-#endif
 
 /* On-disk field ids.  Deliberately not the struct order, so the file layout
  * does not hand out the field semantics for free. */
@@ -584,7 +582,6 @@ int load_offsets_aead(const char *path, const char *release,
                    release_buf_cap);
 }
 
-#ifdef GL_VERBOSE
 int load_offsets_bin(const char *path, const char *release,
                      struct kernel_offsets *out, char *release_buf,
                      size_t release_buf_cap) {
@@ -615,4 +612,3 @@ int load_offsets_bin(const char *path, const char *release,
   return glp_parse(buf + GLT_HDR_SIZE, (size_t)n - GLT_HDR_SIZE, entry_count,
                    release, GLT_KEY, salt, out, release_buf, release_buf_cap);
 }
-#endif

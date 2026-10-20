@@ -69,4 +69,5 @@
     <string name="diagnostics_upload_empty">暂无可上传的本地日志</string>
     <string name="diagnostics_uploaded">日志已上传</string>
     <string name="diagnostics_upload_failed">上传失败，请检查网络或授权状态</string>
+    <string name="diagnostics_offline">离线版：日志仅保存在本机</string>
 </resources>

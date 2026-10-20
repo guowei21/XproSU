@@ -201,19 +201,16 @@ static int try_external_offsets(const char *release) {
     return -1;
   }
 
-#ifdef GL_VERBOSE
+  /* Offline branch: no licence env -> accept the bundled GLT1 container. */
   if (load_offsets_bin(path, release, &g_external_offsets, g_external_release,
                        sizeof(g_external_release)) == 0) {
     active_offsets = &g_external_offsets;
-    pr_success("offsets loaded (stage-1 debug container): %s\n",
+    pr_success("offsets loaded (offline container): %s\n",
                active_offsets->uname_r);
     return 0;
   }
-  return -1;
-#else
   pr_error("E02\n");
   return -1;
-#endif
 }
 static int select_offsets(void) {
   struct utsname uts;

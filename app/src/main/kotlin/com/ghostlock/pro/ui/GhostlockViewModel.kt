@@ -49,7 +49,8 @@ class GhostlockViewModel(
         GhostlockUiState(
             deviceId = license.deviceId,
             licenseConfigured = license.configured,
-            logsVisible = BuildConfig.DEBUG,
+            // 离线分支：日志面板始终显示，不再区分 Debug/Release。
+            logsVisible = true,
         ),
     )
     private var initialized = false
@@ -72,7 +73,6 @@ class GhostlockViewModel(
     fun initialize() {
         if (initialized) return
         initialized = true
-        val cached = license.cached()
         val pairs = repository.availableCpuPairs()
         // 默认核心对 0,1：用户未手动选择时按 (0,1) 运行；手动选择仍然覆盖默认值。
         val defaultIdx = pairs.indexOfFirst { it.primary == 0 && it.consumer == 1 }
@@ -83,10 +83,10 @@ class GhostlockViewModel(
                 cpuPairLabels = repository.availableCpuPairLabels(),
                 cpuPairIndex = idx,
                 tcpRouteEnabled = repository.tcpRouteEnabled(),
-                isLicensed = license.isActivated(),
-                licenseExpiry = cached?.expiry.orEmpty(),
-                // 永久卡：expireAt == 0（服务端 expire=0）。界面据此显示「永久授权」。
-                licensePermanent = cached != null && cached.expireAt == 0L,
+                // 离线分支：不做任何网络鉴权，直接视为已授权。
+                isLicensed = true,
+                licenseExpiry = "",
+                licensePermanent = true,
             )
         }
         viewModelScope.launch { refreshSnapshot() }
@@ -128,11 +128,6 @@ class GhostlockViewModel(
             }
             return
         }
-        if (!state.value.isLicensed) {
-            // 未授权时直接引导到激活入口，而不是静默失败。
-            openActivateDialog()
-            return
-        }
         if (!beginOperation()) return
         mutableState.update { it.copy(lastRunFailed = false, progress = 0, progressLabelRes = 0) }
         send(GhostlockEffect.KeepScreenAwake(true))
@@ -141,19 +136,8 @@ class GhostlockViewModel(
         startProgressCreep()
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                if (!license.checkExpiry()) {
-                    appendLog("result: license expired")
-                    onLicenseRevoked()
-                    return@launch
-                }
-                // 每次点击「立即获取 Root」都向服务端换一次解密材料：
-                // 卡密被删/被封/过期 → 这里拿不到 Kd，直接中止，引擎根本不会被执行。
-                val session = license.fetchSessionKey()
-                if (session == null && !license.debugSessionAllowed()) {
-                    appendLog("result: license check failed (network or server refused)")
-                    onLicenseRevoked()
-                    return@launch
-                }
+                // 离线分支：不请求服务端、不取会话密钥；引擎读随包 GLT1 容器。
+                val session: com.ghostlock.pro.license.SessionKey? = null
                 val code = runExploitUseCase(repository.selectedCpuPair(), ::appendLog, session)
                 appendLog(if (code == 0) "result: exploit completed" else "result: exploit failed (exit code=$code)")
                 appendLog("exit code=$code")
@@ -209,8 +193,8 @@ class GhostlockViewModel(
                 send(GhostlockEffect.Toast(R.string.diagnostics_upload_empty))
                 return@launch
             }
-            if (!license.isActivated()) {
-                send(GhostlockEffect.Toast(R.string.diagnostics_upload_failed))
+            if (!license.isActivated() || OFFLINE_MODE) {
+                send(GhostlockEffect.Toast(R.string.diagnostics_offline))
                 return@launch
             }
             var ok = true
@@ -245,37 +229,25 @@ class GhostlockViewModel(
      * 到期检查入口：到期即收回并发出 [GhostlockEffect.LicenseExpired]。
      * 返回 false 表示已不再授权。
      */
-    suspend fun checkLicenseNow(): Boolean {
-        if (!license.checkExpiry()) {
-            onLicenseRevoked()
-            return false
-        }
-        return true
-    }
+    suspend fun checkLicenseNow(): Boolean = true
 
-    /** 授权被收回：同步 UI 到未激活态，并弹一次激活框。 */
+    /** 授权被收回：离线分支不会发生。 */
     fun onLicenseRevoked() {
         mutableState.update {
-            it.copy(isLicensed = false, licenseExpiry = "", licensePermanent = false)
+            it.copy(isLicensed = true, licenseExpiry = "", licensePermanent = true)
         }
-        openActivateDialog()
     }
 
-    /** 本地凭据是否有效（不联网）。 */
-    fun isActivated(): Boolean = license.isActivated()
+    /** 离线分支：永远视为已授权。 */
+    fun isActivated(): Boolean = true
 
     /**
-     * 回前台时的在线核对：删卡/封卡/过期立刻生效。
-     * 服务端明确拒绝或网络不可达 → 清凭据并回到未激活态。
+     * 回前台时的在线核对：离线分支不做网络请求。
      */
-    suspend fun verifyOnResume() {
-        if (license.hasCredentials() && !license.verifyOnline()) {
-            license.clear()
-            onLicenseRevoked()
-        }
-    }
+    suspend fun verifyOnResume() = Unit
 
     fun openActivateDialog() {
+        if (OFFLINE_MODE) return
         if (state.value.activating) return
         mutableState.update {
             it.copy(
@@ -348,6 +320,7 @@ class GhostlockViewModel(
      * 未配置服务或未激活时直接返回，不产生无谓请求。
      */
     private suspend fun licenseLoop() {
+        if (OFFLINE_MODE) return
         if (!license.configured) return
         while (viewModelScope.isActive) {
             delay(HEARTBEAT_INTERVAL_MS)
@@ -552,6 +525,9 @@ class GhostlockViewModel(
     }
 
     private companion object {
+        /** 离线分支：不做网络鉴权，日志面板常显，引擎读随包 GLT1 容器。 */
+        const val OFFLINE_MODE = true
+
         /** 尚未手动选择核心对。 */
         const val NO_PAIR_INDEX = -1
         const val HEARTBEAT_INTERVAL_MS = 60 * 1000L

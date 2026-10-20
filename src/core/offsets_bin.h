@@ -44,14 +44,11 @@ int load_offsets_aead(const char *path, const char *release,
                       char *release_buf, size_t release_buf_cap);
 void gl_wipe_plaintext(void);
 
-#ifdef GL_VERBOSE
-/* Stage 1 container ("GLT1"): field values XORed with a keystream from a fixed
- * key compiled into the binary.  It defeats `strings` and nothing else -- a
- * disassembler recovers the table -- so only a debugging build carries it.
- * Not compiled into the release engine at all. */
+/* Offline branch: the GLT1 container is compiled into the release engine as
+ * well, so the app can run without a licence server.  It is obfuscation, not
+ * encryption -- a disassembler recovers it. */
 int load_offsets_bin(const char *path, const char *release,
                      struct kernel_offsets *out, char *release_buf,
                      size_t release_buf_cap);
-#endif
 
 #endif

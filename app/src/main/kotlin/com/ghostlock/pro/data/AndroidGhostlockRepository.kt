@@ -49,6 +49,9 @@ class AndroidGhostlockRepository(
         const val GltHeaderSize = 64
         const val GltMaxSize = 1 shl 20
         val GltMagic = byteArrayOf(0x47, 0x4C, 0x54, 0x32) // "GLT2"
+        val Glt1Magic = byteArrayOf(0x47, 0x4C, 0x54, 0x31) // "GLT1"
+        const val OFFLINE_ASSET = "offsets.glt"
+        const val OFFLINE_MODE = true
         const val KEY_TCP_ROUTE = "tcp_route"
     }
 
@@ -120,6 +123,26 @@ class AndroidGhostlockRepository(
      * and must not grow one.
      */
     private fun ensureOffsetsBlob(): Boolean = hasValidBlobHeader(offsetsFile)
+
+    /**
+     * 离线分支：把 APK 内置的 GLT1 容器释放到 filesDir。
+     *
+     * GLT1 由编译进引擎的固定 key 做混淆，不带设备绑定，也不需要服务端下发；
+     * 随包分发意味着任何拿到 APK 的人都能解出偏移表——这是离线版的取舍。
+     */
+    private fun ensureOfflineContainer(): Boolean {
+        return try {
+            val bytes = appContext.assets.open(OFFLINE_ASSET).use { it.readBytes() }
+            if (bytes.size < 16 || !bytes.copyOfRange(0, 4).contentEquals(Glt1Magic)) {
+                false
+            } else {
+                offsetsFile.writeBytes(bytes)
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     /**
      * Header-only check: does this file look like a container for *this* card?
@@ -221,6 +244,13 @@ class AndroidGhostlockRepository(
             if (session != null) {
                 offsetsFile.writeBytes(session.blob)
                 sessionKd = session.kd
+            } else if (OFFLINE_MODE) {
+                // 离线分支：释放随包 GLT1 容器，不需要服务端与会话密钥。
+                if (!ensureOfflineContainer()) {
+                    onLog("error: missing bundled offsets (" + OFFLINE_ASSET + ")")
+                    return 1
+                }
+                sessionKd = ByteArray(0)
             } else {
                 val kd0 = payloadKey()
                 if (kd0 == null) {
