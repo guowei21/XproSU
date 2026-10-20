@@ -12,9 +12,9 @@ val appName = "XproSU"
 val appVersionName = "1.1"
 
 // 原构建用 `git rev-list --count HEAD`（= 93）。从无 .git 的源码目录构建时会回退成 1，
-// 导致无法覆盖安装设备上已装的 versionCode 93。故固定为 93；升级时手工递增。
+// 导致无法覆盖安装已装的版本。故改为手工固定；升级时手工递增。
 val gitVersionCode = 98
-// U验证 接入配置：从 local.properties（或同名环境变量）读取，构建期注入 BuildConfig。
+// 授权服务配置：从 local.properties（或同名环境变量）读取，构建期注入 BuildConfig。
 // 留空表示未配置 —— App 会在激活时明确报错，不会静默放行。
 val localProps = Properties()
 runCatching { localProps.load(rootProject.file("local.properties").inputStream()) }
@@ -39,8 +39,7 @@ android {
         versionName = appVersionName
 
         // 自建授权服务地址（见 server/gl-license/）。留空 = 未配置，App 激活时明确报错。
-        // U验证 的 5 项凭据不再进 APK —— 它只在服务端到服务端使用，见
-        // docs/uverif-integration.md。
+        // 服务端凭据（master_key 等）只留在服务器上，绝不进 APK。
         buildConfigField("String", "LICENSE_BASE_URL", cfgField("LICENSE_BASE_URL"))
         buildConfigField("String", "APP_VER", "\"$appVersionName\"")
     }

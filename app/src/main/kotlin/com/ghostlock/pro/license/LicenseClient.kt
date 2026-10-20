@@ -13,8 +13,7 @@ class LicenseTransport(message: String, cause: Throwable? = null) : Exception(me
 /**
  * 自建授权服务客户端。
  *
- * App **只跟自建服务说话**；U验证 退到服务端到服务端（见
- * `server/gl-license/uverif.py`），因为按设备派生载荷密钥只能在服务端做。
+ * App **只跟自建服务说话**；按设备派生载荷密钥只能在服务端做。
  *
  * 线路格式是 [GlBlob] 的**二进制包**，不是 JSON——JSON 的键名会自描述整套授权
  * 字段（`card`、`device_fp`、`token`、`wrapped`…），留在 dex 里等于把协议白送出去。

@@ -35,11 +35,5 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- 登录窗口保留但不再是入口：卡密改在主界面授权卡片填写/更换。 -->
-        <activity
-            android:name=".ui.LoginActivity"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|mnc|colorMode|density|fontScale|fontWeightAdjustment|keyboard|layoutDirection|locale|mcc|navigation|smallestScreenSize|touchscreen|uiMode"
-            android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
     </application>
 </manifest>

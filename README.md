@@ -1,13 +1,13 @@
-# GhostLock 产品工程（收费分发基线）
+# XproSU 产品工程（收费分发基线）
 
-> **定位**：GhostLock 1.1（`versionCode 93`）的**完整、可编译源码工程**，
+> **定位**：XproSU 1.1（`versionCode 98`）的**完整、可编译源码工程**，
 > 作为「加密 + 卡密鉴权」商业化改造的基线。
 >
 > **上游基线**：`YuKongA/ghostlock-app` 提交 `50d2b72`（2026-09-12，`pselect: fix compact route on 6.1 (#127)`）。
 > 定位依据、比对方法与还原验证见 [`RECONSTRUCTION.md`](RECONSTRUCTION.md)。
 >
 > **商业化方案**：[`ENCRYPTION-PLAN.md`](ENCRYPTION-PLAN.md)。
-> **卡密授权接入**：[`docs/uverif-integration.md`](docs/uverif-integration.md)。
+> **卡密授权接入**：[`server/gl-license/README.md`](server/gl-license/README.md)。
 
 ---
 
@@ -15,18 +15,20 @@
 
 | 路径 | 内容 |
 |---|---|
-| `app/` | Android 应用（Kotlin + Compose + Miuix，14 个 Kotlin 源文件） |
-| `app/src/main/assets/offsets.glt` | 偏移表二进制容器（940 B，3 条表）——**唯一随包分发的偏移数据** |
-| `src/` | native 引擎源码（16 文件）；偏移已移出源码，`src/kernels/offsets.h` 仅剩 struct 定义 |
+| `app/` | Android 应用（Kotlin + Compose + Miuix，17 个 Kotlin 源文件） |
+| `src/` | native 引擎源码（20 文件）；偏移已移出源码，`src/kernels/offsets.h` 仅剩 struct 定义 |
 | `Makefile` / `build.gradle.kts` | C 引擎构建（gradle 的 `buildGhostlockNative` → `prepareGhostlockJniLibs`） |
-| `app/build.gradle.kts` | app 构建（含 U验证 6 项 `buildConfigField` 注入、签名、ABI 裁剪） |
+| `app/build.gradle.kts` | app 构建（授权服务地址注入、签名、ABI 裁剪） |
 | `buildSrc/` | 空壳（生成 `SupportedKernels.kt` 的任务已废弃，该文件改为手写） |
+| `server/gl-license/` | 自建授权服务端（纯 Python 标准库；卡密鉴权 + 按设备派生载荷） |
 | `docs/offsets-binary-format.md` | 偏移表二进制容器（`.glt`）格式与实测证据 |
-| `docs/uverif-integration.md` | U验证 协议、后台配置要求、凭据填写与实测证据 |
 | `docs/upstream-README.md`<br>`docs/upstream-README_ZH.md` | 上游 README 原文（42 条内核 + Rust 提取器说明，**对本工程已不适用**） |
 | `RECONSTRUCTION.md` | 源码还原说明 |
 | `ENCRYPTION-PLAN.md` | 加密与卡密鉴权方案 |
 | `dist/` | 交付 APK 归档 |
+
+> `docs/uverif-*.md` 仅作历史留存：U验证 已整体移除，授权改由
+> `server/gl-license/` 自建服务承担。
 
 **不在这里的东西**：PC 侧的偏移提取脚本与明文 `offsets/*.json` 留在私有化主工程
 （`ghostlock-57-124-145-project/`）。明文表按 `ENCRYPTION-PLAN.md` §1 泄漏点 8 属
@@ -49,45 +51,39 @@ app **不再内置任何偏移数据**：`assets/` 里没有载荷，全部由�
 ## 3. 授权（阶段②：卡密同时管「门」和「锁」）
 
 ```
-登录窗口（独立 Activity，App 入口）
-  └─ 卡密 + 本机指纹 + 本机公钥 ──► 自建授权服务
-                                     ├─ 调 U验证 校验卡密（服务端到服务端）
+主界面（MainActivity，唯一 LAUNCHER）授权卡片
+  └─ 卡密 + 本机指纹 + 本机公钥 ──► 自建授权服务 /api/session
+                                     ├─ 校验卡密状态（有效 / 绑定本机 / 未过期）
                                      ├─ Kd  = HKDF-SHA256(master, salt=SHA-256(卡密), info=设备指纹)
                                      ├─ blob = GLT2：ChaCha20-Poly1305(Kd, AAD=64B 头含卡密摘要)
                                      └─ wrapped = ECIES(本机公钥, Kd)
   ◄─ blob + wrapped
-  └─ TEE 内解出 Kd → 落盘（Kd 经 Keystore 加密）→ 进主界面
+  └─ TEE 内解出 Kd（仅内存持有）→ 注入引擎 → 运行结束立即擦除
 ```
 
-- **登录是独立窗口**：`LoginActivity` 是 LAUNCHER，主界面在授权之前**根本不会被创建**；
-  主界面未授权时会自己退回登录窗口。
+- **单屏入口**：`MainActivity` 是唯一 LAUNCHER；未激活时授权卡片上的「激活卡密」
+  是唯一入口，不再有独立登录页。
+- **密钥随用随取、永不落盘**：每次启动与每次「立即获取 Root」前都向 `/api/session`
+  现场换取 `Kd`，服务端把它封进本次请求的公钥；`Kd` 只在内存中持有，投喂引擎后
+  立即擦除，临时容器文件随用随删。后台删卡/封卡后，下次请求即刻返回 `1001`。
 - **卡密同时参与偏移解密**：容器头里的 `card_tag = SHA-256(卡密)[:16]` 被 AEAD 认证，
   引擎解密前会拿用户输入卡密的摘要与它比对。登录分支被 patch 掉也拿不出这个值，
   容器照样解不开——「门」不再是唯一防线。
 - **两把钥匙缺一不可**：`Kd` 通过 HKDF 的 salt 与卡密绑定；换成另一张卡的 `Kd`
   在认证阶段失败，伪造绑定值在比对阶段失败（实测 5 组负向用例全部拒绝）。
-- **一机一码**：本机指纹取 Widevine `MediaDrm.PROPERTY_DEVICE_UNIQUE_ID`（硬件级，
-  恢复出厂不变），退化用 ANDROID_ID + Build 字段；容器头的 `device_fp` 被 AEAD 认证，
-  引擎再明文比对一次，拷贝到别的设备直接拒绝。
+- **一机一码**：本机指纹取 Widevine `MediaDrm.PROPERTY_DEVICE_UNIQUE_ID`（32 字节、
+  硬件级，恢复出厂不变）；**没有退化方案** —— 取不到就直接拒绝运行。容器头的
+  `device_fp` 被 AEAD 认证，引擎再明文比对一次，拷贝到别的设备直接拒绝。
 - **Release fail-closed**：未配置授权服务地址时激活明确报错，不静默放行；
   只有 `BuildConfig.DEBUG && 未配置服务` 才放行，便于本地调试。
-- **离线容忍**：只有服务端**明确拒绝**才收回授权与载荷，网络不通保持现状（稳定性优先）。
+- **运行必须在线**：没有 `Kd` 就解不开容器，因此 `/api/session` 失败即 fail-closed；
+  心跳（`/api/heartbeat`）在传输失败时按本地到期时间判定，避免网络抖动误伤。
 - **日志分级**：Debug 显示明文运行日志；Release 只显示百分比 + 阶段名，
   R8 + 资源收缩会把日志字符串一并从 APK 删除。
 
 完整协议见 [`docs/stage2-protocol.md`](docs/stage2-protocol.md)；
-U验证 的 5 项凭据与后台配置见 [`docs/uverif-integration.md`](docs/uverif-integration.md)；
 **构建与部署步骤见 [`docs/build-and-deploy.md`](docs/build-and-deploy.md)**；
 **加固清单与 A/B 要求见 [`docs/hardening.md`](docs/hardening.md)**。
-- **Release fail-closed**：未配置授权服务地址时激活明确报错，不静默放行；
-  只有 `BuildConfig.DEBUG && 未配置服务` 才放行，便于本地调试。
-- **离线容忍**：只有服务端**明确拒绝**才收回授权与载荷，网络不通保持现状（稳定性优先）。
-- **日志分级**：Debug 显示明文运行日志；Release 只显示百分比 + 阶段名，
-  R8 + 资源收缩会把日志字符串一并从 APK 删除。
-
-完整协议见 [`docs/stage2-protocol.md`](docs/stage2-protocol.md)；
-U验证 的 5 项凭据与后台配置见 [`docs/uverif-integration.md`](docs/uverif-integration.md)；
-**构建与部署步骤见 [`docs/build-and-deploy.md`](docs/build-and-deploy.md)**。
 
 ---
 
@@ -98,18 +94,10 @@ U验证 的 5 项凭据与后台配置见 [`docs/uverif-integration.md`](docs/uv
 ```properties
 # local.properties（不入库）
 sdk.dir=<Android SDK>
-UVERIF_BASE_URL=<自建 U验证 地址>
-UVERIF_APP_ID=<应用 ID>
-UVERIF_APP_INDEX=<版本索引>
-UVERIF_APP_VER=<版本号>
-UVERIF_APP_KEY=<应用密钥>
-```properties
-# local.properties（不入库）
-sdk.dir=<Android SDK>
 LICENSE_BASE_URL=<自建授权服务对外地址>
 ```
 
-> U验证 的 5 项凭据**不在 App 里**，写在服务端 `config.json`。
+> 服务端凭据（`master_key` 等）**不在 App 里**，写在服务端 `config.json`。
 > 完整步骤（服务端部署、引擎构建、Release 签名、联调清单、排错）见
 > [`docs/build-and-deploy.md`](docs/build-and-deploy.md)。
 
@@ -124,17 +112,21 @@ $env:ANDROID_HOME = '<Android SDK>'
 产物：
 
 ```
-app/build/outputs/apk/debug/GhostLock-v1.1(93)-arm64-v8a-debug.apk
-app/build/outputs/apk/release/GhostLock-v1.1(93)-arm64-v8a-release.apk
+app/build/outputs/apk/debug/XproSU-v1.1(98)-arm64-v8a-debug.apk
+app/build/outputs/apk/release/XproSU-v1.1(98)-arm64-v8a-release.apk
 ```
 
-`-x :buildGhostlockNative` 跳过 `make`；`.so` 已预置在
-`app/src/main/jniLibs/arm64-v8a/libghostlock.so`，`prepareGhostlockJniLibs` 只做拷贝。
-若本机有 `make` + NDK，去掉 `-x` 即可从 `src/` 全量重编。
+`prepareGhostlockJniLibs` 依赖 `buildGhostlockNative`（即 `make ghostlock`），并把产物
+复制到 `app/src/main/jniLibs/arm64-v8a/libghostlock.so`。因此要产出**含引擎**的 APK，
+必须先具备 `make` + NDK；只有在做纯 Kotlin 调试（不需要引擎）时，才用
+`-x :buildGhostlockNative -x :prepareGhostlockJniLibs` 跳过原生编译。
 
 **不需要 Rust / cargo** —— OTA 与 boot.img 解析功能已整体移除（见 §5）。
 
-### 4.1 实测构建结果
+### 4.1 上游基线（`versionCode 93`）实测构建结果
+
+> 下表是改造初期基线版本的实测数据，用于证明构建链路可用。当前发布版本为
+> `versionCode 98`，APK 体积与 `.so` 哈希已随引擎更新而变化。
 
 | 项 | 值 |
 |---|---|
@@ -159,14 +151,14 @@ app/build/outputs/apk/release/GhostLock-v1.1(93)-arm64-v8a-release.apk
 
 ## 5. 与上游 `50d2b72` 的差异
 
-1. `app/build.gradle.kts` —— `versionCode` 固定为 `93`
+1. `app/build.gradle.kts` —— `versionCode` 固定为手工值（当前 `98`）
    （原逻辑走 `git rev-list --count HEAD`，在无 `.git` 目录会回退成 `1` → 无法覆盖安装）
 2. `app/.../data/AndroidGhostlockRepository.kt` —— 固定 `GHOSTLOCK_ROUTE=mcast`（TCP 路线默认开启）
 3. `src/` —— 替换为本项目引擎（偏移表移入 `.glt` 容器；上游 56 文件 / 42 条表留档在
    `_backups/ghostlock-product-20261010-171829/src.upstream-backup/`，**不参与构建**）
 4. **OTA / boot.img 解析功能整体移除**（gradle 任务 + 6 个 Kotlin 文件）
 5. **商业化改造**：包名 `com.ghostlock.app` → `com.ghostlock.pro`；删除偏移导入/导出入口；
-   UI 重构为 HyperOS/Miuix 卡片式；接入 U验证 卡密鉴权；Debug/Release 日志分级
+   UI 重构为 HyperOS/Miuix 卡片式；接入自建卡密授权（U验证 已移除）；Debug/Release 日志分级
 
 逐项依据与比对方法见 [`RECONSTRUCTION.md`](RECONSTRUCTION.md) §2。
 

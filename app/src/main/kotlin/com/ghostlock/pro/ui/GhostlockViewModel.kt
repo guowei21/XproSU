@@ -28,7 +28,7 @@ import kotlinx.coroutines.withContext
 sealed interface GhostlockEffect {
     data class Toast(val resourceId: Int) : GhostlockEffect
 
-    /** 需要展示服务端原文（例如 U验证 返回的拒绝原因）。 */
+    /** 需要展示服务端原文（例如服务端返回的拒绝原因）。 */
     data class Message(val text: String) : GhostlockEffect
     data class Clipboard(val text: String) : GhostlockEffect
     data class KeepScreenAwake(val enabled: Boolean) : GhostlockEffect
@@ -83,9 +83,6 @@ class GhostlockViewModel(
         viewModelScope.launch { refreshSnapshot() }
         viewModelScope.launch { licenseLoop() }
     }
-
-    /** Debug 构建且未配置 U验证 时放行，便于本地调试；Release 一律以服务端结论为准。 */
-    /** 唯一判定在 [LicenseRepository.isActivated]（含 Debug 旁路），这里不再复制一份。 */
 
     fun toggleSafeMode(enabled: Boolean) {
         repository.setSafeModeEnabled(enabled)

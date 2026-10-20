@@ -90,7 +90,7 @@ data class GhostlockUiState(
     val deviceId: String = "",
     val isLicensed: Boolean = false,
     val lastRunFailed: Boolean = false,
-    /** 构建期是否已配置 U验证 服务凭据。 */
+    /** 构建期是否已配置授权服务地址。 */
     val licenseConfigured: Boolean = false,
     /** 服务端返回的到期时间原文，仅用于展示。 */
     val licenseExpiry: String = "",
