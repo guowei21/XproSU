@@ -1,19 +1,21 @@
-"""Negative-path tests for XproSU licensing server (zero dependencies).
+"""Negative-path tests for the XproSU licensing server (zero dependencies).
 
 Run directly:
 
     python negative_test.py
 
-Covers the fail-open regressions the fix targets: upstream business-code
-handling, fail-closed state checks, vipExpDate semantics, chunked request
-smuggling and disabled-card heartbeat state.
+Covers the current local card model: binding, test-card countdown, session
+reissue, revocation, expiry, chunked smuggling and heartbeat state.
+
+The U验证 upstream was removed on 2026-10-13; nothing here talks to it.  Every
+check runs against a throwaway SQLite database and a payload built on the fly,
+so the test never touches the real ``cards.db`` / ``payload.bin``.
 """
 
 from __future__ import annotations
 
 import gc
 import json
-
 import os
 import secrets
 import socket
@@ -25,11 +27,9 @@ import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 
-from crypto import aes128cbc_encrypt, pkcs7_pad, p256_generate_keypair
+from crypto import p256_generate_keypair
 import server as server_mod
 import store as store_mod
-import uverif as uverif_mod
-from uverif import UVerifRejected, UVerifUnreachable
 from wire import (
     KIND_REQUEST,
     KIND_RESPONSE,
@@ -46,41 +46,6 @@ RESULTS = []
 def check(name: str, ok: bool, detail: str = "") -> None:
     RESULTS.append((name, bool(ok), detail))
     print(f"{'PASS' if ok else 'FAIL'}  {name}" + (f"  ({detail})" if detail and not ok else ""))
-
-
-def expect_raises(exc_type, fn) -> None:
-    try:
-        fn()
-    except exc_type:
-        return
-    except Exception as exc:  # pragma: no cover - diagnostic detail only
-        raise AssertionError(f"expected {exc_type.__name__}, got {type(exc).__name__}: {exc}") from exc
-    raise AssertionError(f"expected {exc_type.__name__}, nothing raised")
-
-
-class FakeUverif:
-    def __init__(self, result=None, exc=None):
-        self.result = result
-        self.exc = exc
-
-    def logon(self, account, password, udid):
-        if self.exc is not None:
-            raise self.exc
-        return self.result
-
-
-class FakeResponse:
-    def __init__(self, body: bytes):
-        self.body = body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def read(self):
-        return self.body
 
 
 class QuietHandler(server_mod._Handler):
@@ -101,14 +66,6 @@ def make_ctx(tmpdir: str):
         "admin_key": "negative-test-admin-key-0123456789abcdef",
         "db_path": os.path.join(tmpdir, "cards.db"),
         "payload_path": payload_path,
-        "uverif": {
-            "base_url": "http://127.0.0.1:1",
-            "app_id": "1",
-            "app_index": "x",
-            "app_ver": "1.0.0",
-            "app_key": "k",
-            "aes_key": "0123456789abcdef",
-        },
     }
     return server_mod.LicensingContext(cfg)
 
@@ -121,11 +78,11 @@ def start_server(ctx):
     return srv, thread, f"http://127.0.0.1:{srv.server_address[1]}"
 
 
-def post_json(base: str, path: str, obj: dict) -> tuple[int, dict]:
+def post_json(base: str, path: str, obj: dict, headers: dict | None = None) -> tuple[int, dict]:
     req = urllib.request.Request(
         base + path,
         data=json.dumps(obj).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **(headers or {})},
         method="POST",
     )
     try:
@@ -149,144 +106,224 @@ def post_wire(base: str, path: str, body: bytes) -> tuple[int, str, bytes]:
         return exc.code, exc.headers.get("Content-Type", ""), exc.read()
 
 
-def activation_payload(card: str):
-    _, pub = p256_generate_keypair()
-    return {
+def fresh(ctx) -> None:
+    """Per-IP rate buckets are process-wide; clear them so tests stay independent."""
+    ctx._rate.clear()
+
+
+# --- card binding and test-card countdown ---------------------------------
+
+def test_activate_unknown_card_1001(ctx, base):
+    fresh(ctx)
+    card = store_mod.generate_card_key()
+    status, payload = post_json(base, "/api/activate", {
         "card": card,
         "device_fp": secrets.token_bytes(32).hex(),
-        "pubkey": pub.hex(),
-        "app_ver": "1.0.0",
-    }
+        "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    check("activate unknown card -> 1001", status == 200 and payload.get("code") == 1001, f"{payload}")
 
 
-def assert_no_blob_wrapped(payload: dict) -> None:
-    assert "blob" not in payload, payload
-    assert "wrapped" not in payload, payload
-
-
-# --- upstream business-code fail-closed -----------------------------------
-
-def test_uverif_code_false_fails_closed():
-    client = uverif_mod.UVerifClient(
-        {
-            "base_url": "http://127.0.0.1:1",
-            "app_id": "1",
-            "app_index": "x",
-            "app_ver": "1",
-            "app_key": "k",
-            "aes_key": "0123456789abcdef",
-        }
-    )
-    original = uverif_mod.urllib.request.urlopen
-
-    def fake_urlopen(req, timeout):
-        return FakeResponse(json.dumps({"code": False}).encode("utf-8"))
-
-    uverif_mod.urllib.request.urlopen = fake_urlopen
-    try:
-        expect_raises(UVerifUnreachable, lambda: client.logon("a", "b", "c"))
-    finally:
-        uverif_mod.urllib.request.urlopen = original
-    check("uverif code=false raises UVerifUnreachable", True)
-
-
-def test_uverif_code_0_data_null_returns_none():
-    client = uverif_mod.UVerifClient(
-        {
-            "base_url": "http://127.0.0.1:1",
-            "app_id": "1",
-            "app_index": "x",
-            "app_ver": "1",
-            "app_key": "k",
-            "aes_key": "0123456789abcdef",
-        }
-    )
-    original = uverif_mod.urllib.request.urlopen
-    key = b"0123456789abcdef"
-    iv = os.urandom(16)
-    ct = aes128cbc_encrypt(key, iv, pkcs7_pad(b"null"))
-    data_hex = (iv + ct).hex()
-
-    def fake_urlopen(req, timeout):
-        return FakeResponse(json.dumps({"code": 0, "data": data_hex}).encode("utf-8"))
-
-    uverif_mod.urllib.request.urlopen = fake_urlopen
-    try:
-        result = client._call("logon", {"account": "a", "password": "b", "udid": "c"})
-    finally:
-        uverif_mod.urllib.request.urlopen = original
-    check("uverif code=0 with AES-encrypted null returns None", result is None)
-
-
-# --- server activation fail-closed ----------------------------------------
-
-def test_activate_non_dict_upstream_rejected(ctx, base):
-    ctx._rate.clear()
-    ctx.uverif = FakeUverif(result=["not", "a", "dict"])
-    status, payload = post_json(base, "/api/activate", activation_payload("TEST-NONDICT"))
-    assert_no_blob_wrapped(payload)
-    check("activate non-dict upstream -> 1004", status == 200 and payload.get("code") == 1004, f"{payload}")
-
-
-def test_activate_null_upstream_rejected(ctx, base):
-    ctx._rate.clear()
-    ctx.uverif = FakeUverif(result=None)
-    status, payload = post_json(base, "/api/activate", activation_payload("TEST-NULL"))
-    assert_no_blob_wrapped(payload)
-    check("activate null upstream (AES null) -> 1004", status == 200 and payload.get("code") == 1004, f"{payload}")
-
-
-def test_activate_unreachable_rejected(ctx, base):
-    ctx._rate.clear()
-    ctx.uverif = FakeUverif(exc=UVerifUnreachable("down"))
-    status, payload = post_json(base, "/api/activate", activation_payload("TEST-UNREACH"))
-    assert_no_blob_wrapped(payload)
-    check("activate UVerifUnreachable -> 1004", status == 200 and payload.get("code") == 1004, f"{payload}")
-
-
-def test_activate_missing_state_rejected(ctx, base):
-    ctx._rate.clear()
-    ctx.uverif = FakeUverif(result={"code": 0})
-    status, payload = post_json(base, "/api/activate", activation_payload("TEST-NOSTATE"))
-    assert_no_blob_wrapped(payload)
-    check("activate missing state -> 1001", status == 200 and payload.get("code") == 1001, f"{payload}")
-
-
-def test_vip_exp_date_missing_is_permanent(ctx, base):
-    ctx._rate.clear()
-    ctx.uverif = FakeUverif(result={"state": "y"})
-    status, payload = post_json(base, "/api/activate", activation_payload("TEST-PERM"))
+def test_activate_binds_and_starts_countdown(ctx, base):
+    card = ctx.store.gen_cards(1, duration_sec=3600, batch="neg")[0]
+    device_fp = secrets.token_bytes(32).hex()
+    pub = p256_generate_keypair()[1].hex()
+    before = ctx.store.get_card(store_mod.card_hash(card))
     check(
-        "activate missing vipExpDate -> expire=0 permanent",
-        status == 200
-        and payload.get("code") == 0
-        and payload.get("expire") == 0
-        and payload.get("blob")
-        and payload.get("wrapped"),
+        "test card is unbound with expire=0 before activation",
+        before["device_fp"] is None and int(before["expire"] or 0) == 0,
+        f"fp={before['device_fp']} expire={before['expire']}",
+    )
+
+    started = int(time.time())
+    fresh(ctx)
+    status, payload = post_json(base, "/api/activate", {
+        "card": card, "device_fp": device_fp, "pubkey": pub,
+    })
+    expire = int(payload.get("expire") or 0)
+    check(
+        "activate test card -> code 0 with blob + wrapped",
+        status == 200 and payload.get("code") == 0
+        and len(payload.get("blob", "")) > 100 and len(payload.get("wrapped", "")) > 100,
+        f"{payload.get('code')} {payload.get('msg')}",
+    )
+    check(
+        "countdown starts at first bind (expire ~= now + 3600)",
+        abs(expire - (started + 3600)) <= 5,
+        f"expire={expire} started={started}",
+    )
+    after = ctx.store.get_card(store_mod.card_hash(card))
+    check(
+        "card row records the device fingerprint",
+        after["device_fp"] == device_fp and int(after["expire"] or 0) == expire,
+        f"fp={after['device_fp']} expire={after['expire']}",
+    )
+
+
+def test_activate_other_device_1002(ctx, base):
+    card = ctx.store.gen_cards(1, duration_sec=3600, batch="neg")[0]
+    owner_fp = secrets.token_bytes(32).hex()
+    thief_fp = secrets.token_bytes(32).hex()
+    fresh(ctx)
+    status, payload = post_json(base, "/api/activate", {
+        "card": card, "device_fp": owner_fp, "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    assert payload.get("code") == 0, payload
+
+    fresh(ctx)
+    status, payload = post_json(base, "/api/activate", {
+        "card": card, "device_fp": thief_fp, "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    check("activate from another device -> 1002", status == 200 and payload.get("code") == 1002, f"{payload}")
+    row = ctx.store.get_card(store_mod.card_hash(card))
+    check("rejected activation does not move the binding", row["device_fp"] == owner_fp, f"{row['device_fp']}")
+
+
+def test_reactivate_keeps_countdown(ctx, base):
+    card = ctx.store.gen_cards(1, duration_sec=3600, batch="neg")[0]
+    device_fp = secrets.token_bytes(32).hex()
+    fresh(ctx)
+    _, first = post_json(base, "/api/activate", {
+        "card": card, "device_fp": device_fp, "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    time.sleep(1.1)
+    fresh(ctx)
+    status, second = post_json(base, "/api/activate", {
+        "card": card, "device_fp": device_fp, "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    check(
+        "reinstall (same device_fp, new pubkey) keeps the original countdown",
+        status == 200 and second.get("code") == 0
+        and int(second.get("expire") or 0) == int(first.get("expire") or 0),
+        f"first={first.get('expire')} second={second.get('expire')}",
+    )
+
+
+def test_permanent_card_expire_zero(ctx, base):
+    card = ctx.store.gen_cards(1, duration_sec=0, batch="neg")[0]
+    fresh(ctx)
+    status, payload = post_json(base, "/api/activate", {
+        "card": card,
+        "device_fp": secrets.token_bytes(32).hex(),
+        "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    check(
+        "permanent card -> code 0, expire=0",
+        status == 200 and payload.get("code") == 0 and payload.get("expire") == 0,
         f"{payload}",
     )
 
 
-def test_vip_exp_date_number_rejected(ctx, base):
-    ctx._rate.clear()
-    ctx.uverif = FakeUverif(result={"state": "y", "info": {"vipExpDate": 20261231}})
-    status, payload = post_json(base, "/api/activate", activation_payload("TEST-NUMDATE"))
-    assert_no_blob_wrapped(payload)
-    check("activate numeric vipExpDate -> 1011", status == 200 and payload.get("code") == 1011, f"{payload}")
+def test_expired_card_1003(ctx, base):
+    card = ctx.store.gen_cards(1, duration_sec=0, batch="neg")[0]
+    with ctx.store._connect() as conn:
+        conn.execute(
+            "UPDATE cards SET expire = ? WHERE card_hash = ?",
+            (int(time.time()) - 60, store_mod.card_hash(card)),
+        )
+    fresh(ctx)
+    status, payload = post_json(base, "/api/activate", {
+        "card": card,
+        "device_fp": secrets.token_bytes(32).hex(),
+        "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    check("expired card -> 1003", status == 200 and payload.get("code") == 1003, f"{payload}")
 
 
-def test_vip_exp_date_garbage_rejected(ctx, base):
-    ctx._rate.clear()
-    ctx.uverif = FakeUverif(result={"state": "y", "vipExpDate": "not-a-date"})
-    status, payload = post_json(base, "/api/activate", activation_payload("TEST-GARBAGE"))
-    assert_no_blob_wrapped(payload)
-    check("activate garbage vipExpDate -> 1011", status == 200 and payload.get("code") == 1011, f"{payload}")
+# --- session key issue -----------------------------------------------------
+
+def test_session_requires_bound_card(ctx, base):
+    card = ctx.store.gen_cards(1, duration_sec=3600, batch="neg")[0]
+    fresh(ctx)
+    status, payload = post_json(base, "/api/session", {
+        "card": card,
+        "device_fp": secrets.token_bytes(32).hex(),
+        "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    check("session on an unbound card -> 1002", status == 200 and payload.get("code") == 1002, f"{payload}")
 
 
-# --- chunked transfer-encoding --------------------------------------------
+def test_session_same_device_rekeys_without_extending(ctx, base):
+    card = ctx.store.gen_cards(1, duration_sec=3600, batch="neg")[0]
+    device_fp = secrets.token_bytes(32).hex()
+    fresh(ctx)
+    _, act = post_json(base, "/api/activate", {
+        "card": card, "device_fp": device_fp, "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    assert act.get("code") == 0, act
+
+    fresh(ctx)
+    status, payload = post_json(base, "/api/session", {
+        "card": card, "device_fp": device_fp, "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    check(
+        "session after reinstall (new pubkey) -> code 0 with a fresh envelope",
+        status == 200 and payload.get("code") == 0 and len(payload.get("wrapped", "")) > 100,
+        f"{payload.get('code')} {payload.get('msg')}",
+    )
+    check(
+        "session does not extend or restart the countdown",
+        int(payload.get("expire") or 0) == int(act.get("expire") or 0),
+        f"activate={act.get('expire')} session={payload.get('expire')}",
+    )
+
+
+def test_session_other_device_1002(ctx, base):
+    card = ctx.store.gen_cards(1, duration_sec=3600, batch="neg")[0]
+    fresh(ctx)
+    post_json(base, "/api/activate", {
+        "card": card,
+        "device_fp": secrets.token_bytes(32).hex(),
+        "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    fresh(ctx)
+    status, payload = post_json(base, "/api/session", {
+        "card": card,
+        "device_fp": secrets.token_bytes(32).hex(),
+        "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    check("session from another device -> 1002", status == 200 and payload.get("code") == 1002, f"{payload}")
+
+
+def test_session_after_disable_1001(ctx, base):
+    card = ctx.store.gen_cards(1, duration_sec=3600, batch="neg")[0]
+    device_fp = secrets.token_bytes(32).hex()
+    fresh(ctx)
+    post_json(base, "/api/activate", {
+        "card": card, "device_fp": device_fp, "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    ctx.store.disable_card(store_mod.card_hash(card))
+    fresh(ctx)
+    status, payload = post_json(base, "/api/session", {
+        "card": card, "device_fp": device_fp, "pubkey": p256_generate_keypair()[1].hex(),
+    })
+    check("session after disable -> 1001", status == 200 and payload.get("code") == 1001, f"{payload}")
+
+
+# --- removed bind/unbind surface ------------------------------------------
+
+def test_rebind_endpoint_removed(ctx, base):
+    fresh(ctx)
+    status, payload = post_json(
+        base, "/api/admin/rebind", {"card": store_mod.generate_card_key(), "device_fp": None},
+        headers={"Authorization": "Bearer negative-test-admin-key-0123456789abcdef"},
+    )
+    check("removed /api/admin/rebind -> 404", status == 404, f"http={status}")
+
+
+def test_unbind_action_refused(ctx, base):
+    fresh(ctx)
+    status, payload = post_json(
+        base, "/admin/api/card_action",
+        {"action": "unbind", "card_hash": "00" * 32},
+        headers={"Cookie": "gl_admin_sid=" + "0" * 32},
+    )
+    check("card_action=unbind is not reachable", payload.get("code") not in (0, None), f"http={status} {payload}")
+
+
+# --- transport and heartbeat state ---------------------------------------
 
 def test_chunked_request_rejected():
-    port = None
     # A throwaway server is enough: the check happens before any routing.
     srv = ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
     srv.context = None
@@ -320,13 +357,8 @@ def test_chunked_request_rejected():
         thread.join(timeout=5)
 
 
-
-
-
-# --- heartbeat state -------------------------------------------------------
-
 def test_heartbeat_disabled_state_zero(ctx, base):
-    ctx._rate.clear()
+    fresh(ctx)
     card_key = store_mod.generate_card_key()
     card_hash_value = store_mod.card_hash(card_key)
     device_fp = secrets.token_bytes(32).hex()
@@ -353,23 +385,25 @@ def main() -> int:
         ctx = make_ctx(tmpdir)
         srv, thread, base = start_server(ctx)
         try:
-            test_uverif_code_false_fails_closed()
-            test_uverif_code_0_data_null_returns_none()
-            test_activate_non_dict_upstream_rejected(ctx, base)
-            test_activate_null_upstream_rejected(ctx, base)
-            test_activate_unreachable_rejected(ctx, base)
-            test_activate_missing_state_rejected(ctx, base)
-            test_vip_exp_date_missing_is_permanent(ctx, base)
-            test_vip_exp_date_number_rejected(ctx, base)
-            test_vip_exp_date_garbage_rejected(ctx, base)
             test_chunked_request_rejected()
+            test_activate_unknown_card_1001(ctx, base)
+            test_activate_binds_and_starts_countdown(ctx, base)
+            test_activate_other_device_1002(ctx, base)
+            test_reactivate_keeps_countdown(ctx, base)
+            test_permanent_card_expire_zero(ctx, base)
+            test_expired_card_1003(ctx, base)
+            test_session_requires_bound_card(ctx, base)
+            test_session_same_device_rekeys_without_extending(ctx, base)
+            test_session_other_device_1002(ctx, base)
+            test_session_after_disable_1001(ctx, base)
+            test_rebind_endpoint_removed(ctx, base)
+            test_unbind_action_refused(ctx, base)
             test_heartbeat_disabled_state_zero(ctx, base)
         finally:
             srv.shutdown()
             srv.server_close()
             thread.join(timeout=5)
         gc.collect()  # release sqlite connections before TemporaryDirectory cleanup on Windows
-
 
     failed = [r for r in RESULTS if not r[1]]
     print("---")

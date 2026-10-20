@@ -43,16 +43,8 @@ class LicenseStore(context: Context) {
     }
 
     fun clear() {
+        // Kd 不再落盘；清理 `p` 只是为了让从旧版本升级上来的设备不残留旧密钥。
         prefs.edit().remove(KEY_BLOB).remove(KEY_PAYLOAD).apply()
-    }
-
-    /**
-     * Kd **不再落盘**：每次使用前由 [LicenseRepository.fetchSessionKey] 现场向
-     * 服务端换取（封在本机 TEE 公钥里），用完即弃。`clear()` 仍会清掉历史遗留的
-     * `p` 字段，保证旧版本升级上来不会留一份旧密钥在盘上。
-     */
-    fun clearPayload() {
-        prefs.edit().remove(KEY_PAYLOAD).apply()
     }
 
     private fun encrypt(plain: ByteArray): String {

@@ -15,7 +15,7 @@ target/
 *.keystore
 
 # ── 授权服务端的真实秘密：只留在服务器上，绝不入库 / 绝不随包分发 ──────────
-# config.json   含 master_key 与 U验证 凭据（泄露 = 全部卡密作废）
+# config.json   含 master_key / admin_key（泄露 = 全部卡密作废）
 # payload.bin   明文偏移表（分发即致命，见 ENCRYPTION-PLAN.md §1 泄漏点 8）
 # cards.db      卡密库（只存哈希，但仍是运营数据）
 server/gl-license/config.json

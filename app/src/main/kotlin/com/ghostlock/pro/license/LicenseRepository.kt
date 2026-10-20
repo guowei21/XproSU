@@ -212,21 +212,6 @@ class LicenseRepository(
         return DeviceFingerprint.hex(digest.copyOfRange(0, CARD_TAG_SIZE))
     }
 
-    /**
-     * 引擎需要的容器路径。
-     *
-     * 会话模式下容器由 [fetchSessionKey] 现场返回，写入临时文件给引擎
-     * 一次性使用，`clear()` 时删除。返回 null 表示当前没有可用的会话容器。
-     */
-    fun stageContainer(blob: ByteArray): String? {
-        return try {
-            payloadFile.writeBytes(blob)
-            payloadFile.absolutePath
-        } catch (_: Exception) {
-            null
-        }
-    }
-
     /** 用卡密激活本机，并取回本机专属载荷。 */
     suspend fun activate(cardKey: String): ActivationResult = withContext(Dispatchers.IO) {
         // 输入可能被输入法改坏（全角/零宽/连字符变体）——统一清洗成规范形式，

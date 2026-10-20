@@ -61,7 +61,8 @@ def cmd_gen(cfg: dict, args) -> int:
         print(c)
     kind = "测试卡(1小时)" if duration else "永久卡"
     print(f"generated {len(cards)} card(s), type={kind}, batch={args.batch or '-'}")
-    print("提示：测试卡的 1 小时从**首次绑定机器**开始算；未激活不过期。")
+    if duration:
+        print("提示：测试卡的 1 小时从**首次绑定机器**开始算；未激活不过期。")
     return 0
 
 
