@@ -90,6 +90,13 @@ class GhostlockViewModel(
         }
         viewModelScope.launch { refreshSnapshot() }
         viewModelScope.launch { licenseLoop() }
+
+        // 启动即写一条本地标记并尝试上传：装上就能验证「落盘 + 上传」整条链路，
+        // 不必先跑一次提权。未激活/离线时上传失败是静默的，不影响使用。
+        val bootLine = "[boot] ${Build.MODEL} / Android ${Build.VERSION.RELEASE} / " +
+            "app ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE})"
+        deviceLog.append(bootLine)
+        viewModelScope.launch { license.uploadLogs(listOf(bootLine)) }
     }
 
     fun toggleSafeMode(enabled: Boolean) {
