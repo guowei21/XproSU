@@ -21,6 +21,7 @@
 | `compare-57-145-124.md` | 三个内核版本的偏移漂移分析（结论：不可用统一 delta） |
 | `vr-ko-neutralize.md` | vivo `vr.ko` 中和（不做则 ksud/KernelSU 被杀） |
 | `offsets/` | 三版本明文偏移 JSON（设备验证值）与字段说明 |
+| `engine/` | R15 旧版 C 引擎参考源码：内建三版本表、`offsets_json` 合并加载、上游缺失的 `off_tp_sys_exit_*`（vr.ko）字段、mcast/tcp/pselect 路由 |
 | `evidence/` | 真机全流程日志与装机核验记录 |
 | `../../tools/private-deploy/` | `build.sh` / `build_r15.sh` / `lld_link.sh` / `repack_apk.py` |
 | `../../scripts/private-deploy/` | 偏移提取、BTF、kallsyms、内建表生成脚本 |
