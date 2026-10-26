@@ -15,11 +15,6 @@ on:
         default: "release"
         type: choice
         options: [release, debug]
-      license_base_url:
-        description: "license base URL (empty = use repo variable)"
-        required: false
-        default: ""
-
 concurrency:
   group: build-apk-${{ github.ref }}
   cancel-in-progress: true
@@ -90,18 +85,6 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Resolve license URL
-        id: license
-        run: |
-          set -euo pipefail
-          url="${{ inputs.license_base_url }}"
-          [ -z "$url" ] && url="${{ vars.LICENSE_BASE_URL }}"
-          [ -z "$url" ] && url="${{ secrets.LICENSE_BASE_URL }}"
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-          if [ -z "$url" ]; then
-            echo "::warning::LICENSE_BASE_URL is empty: the APK will refuse to activate (fail-closed by design)"
-          fi
-
       - name: Decode signing key (release only)
         id: signing
         if: inputs.build_type != 'debug'
@@ -120,8 +103,6 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ runner.temp }}/ondk
           NDK_ROOT: ${{ runner.temp }}/ondk
-          LICENSE_BASE_URL: ${{ steps.license.outputs.url }}
-          APP_VER: "1.1"
           KEYSTORE_PATH: ${{ steps.signing.outputs.enabled == 'true' && format('{0}/keystore.jks', runner.temp) || '' }}
           KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
@@ -149,11 +130,11 @@ jobs:
           echo "== basics =="
           ls -l "$APK_PATH"
           unzip -l "$APK_PATH" | grep -E "lib/arm64-v8a/libghostlock.so|assets/|classes.*dex" || true
-          echo "== plaintext offset symbols / license domain =="
+          echo "== plaintext offset symbols in dex =="
           if unzip -p "$APK_PATH" classes*.dex 2>/dev/null | strings | grep -qiE "task_seccomp|off_init_cred"; then
-            echo "::warning::plaintext offset symbols or license domain found in dex"
+            echo "::warning::plaintext offset symbols found in dex"
           else
-            echo "::notice::no plaintext offset symbols / license domain in dex"
+            echo "::notice::no plaintext offset symbols in dex"
           fi
           echo "== signature =="
           if [ -n "${{ secrets.SIGNING_KEY_BASE64 }}" ]; then

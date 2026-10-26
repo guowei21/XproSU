@@ -83,23 +83,9 @@ data class GhostlockUiState(
     val tcpRouteEnabled: Boolean = false,
     val executionSheetVisible: Boolean = false,
     val executionSheetDismissible: Boolean = false,
-    val dialogVisible: Boolean = false,
-    val dialogType: DialogType = DialogType.NONE,
-    val dialogTitleRes: Int = 0,
-    val dialogMessageRes: Int = 0,
-    val dialogInput: String = "",
     val logLines: List<GhostlockLogLine> = emptyList(),
-    val deviceId: String = "",
-    val isLicensed: Boolean = false,
     val lastRunFailed: Boolean = false,
-    /** 构建期是否已配置授权服务地址。 */
-    val licenseConfigured: Boolean = false,
-    /** 服务端返回的到期时间原文，仅用于展示。 */
-    val licenseExpiry: String = "",
-    val licensePermanent: Boolean = false,
-    /** 正在向服务端校验卡密。 */
-    val activating: Boolean = false,
-    /** 提权进度 0..100，Release 交付版以此替代明文日志。 */
+    /** 提权进度 0..100，按引擎阶段行推进。 */
     val progress: Int = 0,
     /** 当前阶段名资源；0 表示尚未进入任何阶段。 */
     val progressLabelRes: Int = 0,
@@ -107,11 +93,9 @@ data class GhostlockUiState(
     val cpuPairLabels: List<String> = emptyList(),
     /** 0 = 自动优选，其余为 [cpuPairLabels] 的下标 + 1。 */
     val cpuPairIndex: Int = -1,
-    /** 明文运行日志是否可见：仅 Debug 构建为 true。 */
-    val logsVisible: Boolean = false,
+    /** 明文运行日志是否可见：公开版恒为 true。 */
+    val logsVisible: Boolean = true,
 )
-
-enum class DialogType { NONE, INPUT }
 
 data class GhostlockLogLine(val text: String, val color: Int)
 
@@ -120,16 +104,10 @@ interface GhostlockActions {
     fun onCloseExecutionSheet()
     fun onCopyLogs()
     fun onClearLogs() = Unit
-    fun onUploadLogs() = Unit
-    fun onCopyDeviceId() = Unit
-    fun onOpenActivateDialog() = Unit
+    fun onExportLogs() = Unit
     fun onSafeModeChanged(enabled: Boolean)
     fun onTcpRouteChanged(enabled: Boolean) = Unit
     fun onCpuPairSelected(index: Int) = Unit
-    fun onDialogInputChange(value: String)
-    fun onDialogConfirm(value: String)
-    fun onDialogDismiss()
-    fun onDialogDismissFinished()
 }
 
 @Composable
@@ -174,7 +152,6 @@ internal fun GhostlockApp(
                     )
                 }
             }
-            GhostlockDialog(state = state, actions = actions)
             GhostlockExecutionSheet(state = state, actions = actions)
         }
     }
@@ -205,21 +182,10 @@ private fun PortraitContent(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        item(key = "license") {
-            LicenseCard(
-                isLicensed = state.isLicensed,
-                configured = state.licenseConfigured,
-                expiry = state.licenseExpiry,
-                permanent = state.licensePermanent,
-                onActivateClick = actions::onOpenActivateDialog,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
         item(key = "run") {
             RunButton(
                 running = state.running,
                 supported = state.kernelSupported,
-                isLicensed = state.isLicensed,
                 lastRunFailed = state.lastRunFailed,
                 progress = state.progress,
                 progressLabelRes = state.progressLabelRes,
@@ -237,7 +203,7 @@ private fun PortraitContent(
                 cpuPairLabels = state.cpuPairLabels,
                 cpuPairIndex = state.cpuPairIndex,
                 onCpuPairSelected = actions::onCpuPairSelected,
-                onUploadLogs = actions::onUploadLogs,
+                onExportLogs = actions::onExportLogs,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -279,18 +245,9 @@ private fun LandscapeContent(
                 kernelRelease = state.kernelRelease,
                 modifier = Modifier.fillMaxWidth(),
             )
-            LicenseCard(
-                isLicensed = state.isLicensed,
-                configured = state.licenseConfigured,
-                expiry = state.licenseExpiry,
-                permanent = state.licensePermanent,
-                onActivateClick = actions::onOpenActivateDialog,
-                modifier = Modifier.fillMaxWidth(),
-            )
             RunButton(
                 running = state.running,
                 supported = state.kernelSupported,
-                isLicensed = state.isLicensed,
                 lastRunFailed = state.lastRunFailed,
                 progress = state.progress,
                 progressLabelRes = state.progressLabelRes,
@@ -313,7 +270,7 @@ private fun LandscapeContent(
                 cpuPairLabels = state.cpuPairLabels,
                 cpuPairIndex = state.cpuPairIndex,
                 onCpuPairSelected = actions::onCpuPairSelected,
-                onUploadLogs = actions::onUploadLogs,
+                onExportLogs = actions::onExportLogs,
                 modifier = Modifier.fillMaxWidth(),
             )
             if (state.logsVisible) {
@@ -496,152 +453,12 @@ private fun SpecRow(
 }
 
 /**
- * 2. 商业化·设备授权与卡密管理卡片
- */
-@Composable
-private fun LicenseCard(
-    isLicensed: Boolean,
-    configured: Boolean,
-    expiry: String,
-    permanent: Boolean,
-    onActivateClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val isDark = isSystemInDarkTheme()
-    val pillBg = if (isLicensed) {
-        if (isDark) Color(0xFF064E3B) else Color(0xFFECFDF5)
-    } else {
-        if (isDark) Color(0xFF78350F) else Color(0xFFFFFBEB)
-    }
-    val pillColor = if (isLicensed) {
-        if (isDark) Color(0xFF6EE7B7) else Color(0xFF059669)
-    } else {
-        if (isDark) Color(0xFFFDE68A) else Color(0xFFD97706)
-    }
-
-    Card(
-        modifier = modifier,
-        insideMargin = PaddingValues(15.dp),
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Lock,
-                        contentDescription = null,
-                        modifier = Modifier.size(15.dp),
-                        tint = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                    )
-                    Text(
-                        text = stringResource(R.string.license_sec_title),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(pillBg)
-                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                ) {
-                    Text(
-                        text = "● " + stringResource(
-                            if (isLicensed) R.string.license_pill_ok else R.string.license_pill_pending,
-                        ),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = pillColor,
-                    )
-                }
-            }
-
-            // 卡密有效期盒子：永久卡显示「永久授权」，限期卡显示到期时间。
-            // 原本机识别码不再对外展示（Widevine ID 只作为内部绑定凭据）。
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (isDark) Color(0xFF121822) else Color(0xFFF8FAFC))
-                    .border(
-                        1.dp,
-                        if (isDark) Color(0x1AFFFFFF) else Color(0x0F000000),
-                        RoundedCornerShape(12.dp),
-                    )
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column {
-                    Text(
-                        text = stringResource(R.string.license_expiry_title),
-                        fontSize = 10.5.sp,
-                        color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    )
-                    Text(
-                        text = if (isLicensed) {
-                            if (permanent) stringResource(R.string.license_permanent)
-                            else expiry.ifEmpty { "----" }
-                        } else {
-                            "----"
-                        },
-                        fontSize = 12.sp,
-                        lineHeight = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MiuixTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(top = 1.dp),
-                    )
-                }
-            }
-
-            // 单一授权控件：未激活 → 「请点击激活卡密」；已激活 → 「已激活」（点击换卡）。
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(pillBg)
-                    .clickable(onClick = onActivateClick)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = if (isLicensed) stringResource(R.string.license_pill_ok)
-                    else stringResource(R.string.action_tap_activate),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = pillColor,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = if (isLicensed) stringResource(R.string.action_reactivate) + " >"
-                    else stringResource(R.string.action_activate_key) + " >",
-                    fontSize = 11.sp,
-                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.55f),
-                )
-            }
-        }
-    }
-}
-
-/**
- * 3. 主操作高亮按钮 (Hero CTA)
+ * 2. 主操作高亮按钮 (Hero CTA)
  */
 @Composable
 private fun RunButton(
     running: Boolean,
     supported: Boolean,
-    isLicensed: Boolean,
     lastRunFailed: Boolean,
     progress: Int,
     progressLabelRes: Int,
@@ -652,7 +469,6 @@ private fun RunButton(
     val buttonText = when {
         running -> stringResource(R.string.action_running)
         !supported -> stringResource(R.string.action_unsupported)
-        !isLicensed -> stringResource(R.string.action_needs_activation)
         lastRunFailed -> stringResource(R.string.action_retry)
         else -> stringResource(R.string.action_run)
     }
@@ -666,7 +482,7 @@ private fun RunButton(
         }
         TextButton(
             text = buttonText,
-            enabled = supported && isLicensed && !running,
+            enabled = supported && !running,
             colors = ButtonDefaults.textButtonColorsPrimary(),
             onClick = onClick,
             modifier = Modifier
@@ -737,7 +553,7 @@ private fun MaintenanceCard(
     cpuPairLabels: List<String>,
     cpuPairIndex: Int,
     onCpuPairSelected: (Int) -> Unit,
-    onUploadLogs: () -> Unit,
+    onExportLogs: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Card(modifier = modifier) {
@@ -785,7 +601,7 @@ private fun MaintenanceCard(
                     .height(1.dp)
                     .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f)),
             )
-            // 卡死/重启后自动上传不一定赶得上，这里给用户一个手动补交入口。
+            // 卡死/重启后运行中的滚动日志会丢，这里把落盘的那份复制出来。
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -793,19 +609,19 @@ private fun MaintenanceCard(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
-                    text = stringResource(R.string.diagnostics_upload),
+                    text = stringResource(R.string.diagnostics_log_title),
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Medium,
                     color = MiuixTheme.colorScheme.onSurface,
                 )
                 Text(
-                    text = stringResource(R.string.diagnostics_upload_summary),
+                    text = stringResource(R.string.diagnostics_log_summary),
                     fontSize = 12.sp,
                     color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 )
                 TextButton(
-                    text = stringResource(R.string.diagnostics_upload_action),
-                    onClick = onUploadLogs,
+                    text = stringResource(R.string.diagnostics_log_action),
+                    onClick = onExportLogs,
                     colors = ButtonDefaults.textButtonColorsPrimary(),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1008,55 +824,6 @@ private fun GhostlockExecutionSheet(
     )
 }
 
-@Composable
-private fun GhostlockDialog(
-    state: GhostlockUiState,
-    actions: GhostlockActions,
-) {
-    OverlayDialog(
-        show = state.dialogVisible,
-        title = if (state.dialogType == DialogType.NONE) null else stringResource(state.dialogTitleRes),
-        onDismissRequest = actions::onDialogDismiss,
-        onDismissFinished = actions::onDialogDismissFinished,
-        content = {
-            when (state.dialogType) {
-                DialogType.INPUT -> {
-                    TextField(
-                        value = state.dialogInput,
-                        onValueChange = actions::onDialogInputChange,
-                        label = stringResource(state.dialogMessageRes),
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 16.dp),
-                    ) {
-                        TextButton(
-                            modifier = Modifier.weight(1f),
-                            text = stringResource(R.string.cancel),
-                            onClick = actions::onDialogDismiss,
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        TextButton(
-                            modifier = Modifier.weight(1f),
-                            text = if (state.activating) {
-                                stringResource(R.string.action_running)
-                            } else {
-                                stringResource(R.string.activate_dialog_btn)
-                            },
-                            colors = ButtonDefaults.textButtonColorsPrimary(),
-                            onClick = { actions.onDialogConfirm(state.dialogInput) },
-                        )
-                    }
-                }
-
-                DialogType.NONE -> Unit
-            }
-        },
-    )
-}
 
 @Composable
 private fun LogPanel(

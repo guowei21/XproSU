@@ -17,17 +17,3 @@ data class KernelSnapshot(
 enum class LogTone { Default, Error, Success, Warning, Progress }
 
 data class LogEntry(val text: String, val tone: LogTone)
-
-/**
- * Outcome of installing an offsets package.
- *
- * There is no "requires overwrite" or "already present" case any more: a
- * package replaces the previous one outright, and the app cannot tell which
- * releases it carries -- the container stores a hash of the release string,
- * not the string.  Nothing here ever exposes a field name or an offset value,
- * because the app never parses the package.
- */
-sealed interface OffsetImportResult {
-    data object Imported : OffsetImportResult
-    data class Failed(val reason: String) : OffsetImportResult
-}

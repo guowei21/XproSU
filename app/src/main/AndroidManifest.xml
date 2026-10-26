@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 公开版不联网：没有激活、没有心跳、没有日志上传，因此也不申请 INTERNET。 -->
     <queries>
         <package android:name="me.weishu.kernelsu.pr" />
         <package android:name="me.weishu.kernelsu" />
@@ -15,16 +15,15 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.XproSU"
-        android:allowBackup="false"
-        android:networkSecurityConfig="@xml/network_security_config">
+        android:allowBackup="false">
         <!--
-            注意：这里**故意不设** android:extractNativeLibs="false"。
-            引擎是以「文件」形式被 exec 的（AndroidGhostlockRepository 取
+            注意：这里 **故意不设** android:extractNativeLibs="false"。
+            引擎是以「文件」形式被 exec 的（AndroidGhostlockRepository 从
             applicationInfo.nativeLibraryDir 下的 libghostlock.so），一旦不抽取到
             磁盘，那个路径上根本没有文件，提权直接失败。所以
             packaging.jniLibs.useLegacyPackaging 必须保持 true。
         -->
-        <!-- 主界面即入口：未激活时授权卡片上「激活卡密」是唯一入口。 -->
+        <!-- 主界面即入口：没有激活页，打开就能跑。 -->
         <activity
             android:name=".ui.MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|mnc|colorMode|density|fontScale|fontWeightAdjustment|keyboard|layoutDirection|locale|mcc|navigation|smallestScreenSize|touchscreen|uiMode"

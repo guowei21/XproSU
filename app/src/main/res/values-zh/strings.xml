@@ -5,7 +5,6 @@
     <string name="action_running">提权进行中（请稍候）…</string>
     <string name="action_retry">重试</string>
     <string name="action_unsupported">本机暂不支持</string>
-    <string name="action_needs_activation">请先激活</string>
     <string name="cancel">取消</string>
     <string name="action_copy">复制</string>
     <string name="action_clear">清屏</string>
@@ -26,48 +25,20 @@
     <string name="safe_mode_summary">启动时自动处理冲突模块</string>
     <string name="tcp_route_label">TCP 路由</string>
     <string name="tcp_route_summary">W1 走 socket 路由；关闭则走多播路由</string>
-    <string name="run_route_timeout">路由超时（未卡死），请切换路由后重试</string>
     <string name="cpu_pair_label">处理核心</string>
     <string name="progress_preparing">正在准备…</string>
-    <string name="license_sec_title">授权</string>
-    <string name="license_pill_ok">已激活</string>
-    <string name="license_pill_pending">未激活</string>
-    <string name="action_activate_key">激活卡密</string>
-    <string name="activate_dialog_title">输入卡密</string>
-    <string name="activate_dialog_hint">请输入卡密</string>
-    <string name="activate_dialog_btn">激活</string>
-    <string name="activate_success">激活成功</string>
     <string name="console_title">运行状态</string>
-    <string name="license_card_empty">请输入卡密</string>
-    <string name="license_verify_failed">验证失败</string>
-    <string name="license_network_error">网络异常，请重试</string>
-    <string name="license_activate_failed">激活失败</string>
-    <string name="license_no_token">激活失败，请重试</string>
-    <string name="license_config_missing">服务暂不可用，请稍后重试</string>
-    <string name="license_device_unsupported">本机不支持，无法激活</string>
     <string name="stage_lock_cores">准备中</string>
     <string name="stage_prepare">环境准备</string>
     <string name="stage_neutralize">兼容处理</string>
     <string name="stage_race_won">核心步骤</string>
     <string name="stage_write_cred">配置权限</string>
     <string name="stage_done">已完成</string>
-    <string name="license_bad_payload">数据异常，请重试</string>
-    <string name="license_unwrap_failed">卡密无效或与本机不符</string>
-
-    <!-- 卡密有效期盒子 -->
-    <string name="license_expiry_title">卡密有效期</string>
-    <string name="license_permanent">永久授权</string>
-    <!-- 未激活时授权卡片的可点提示（合并后的单一控件） -->
-    <string name="action_tap_activate">请点击激活卡密</string>
-    <string name="action_reactivate">更换卡密</string>
-    <!-- 运行失败且当前版本不支持 -->
     <string name="run_unsupported_version">当前版本不支持，请降级使用</string>
 
-    <string name="diagnostics_upload">诊断日志</string>
-    <string name="diagnostics_upload_summary">把本机最近一次运行日志上传到服务器（可能含已自动上传的部分，仅保留 24 小时）</string>
-    <string name="diagnostics_upload_action">立即上传</string>
-    <string name="diagnostics_upload_empty">暂无可上传的本地日志</string>
-    <string name="diagnostics_uploaded">日志已上传</string>
-    <string name="diagnostics_upload_failed">上传失败，请检查网络或授权状态</string>
-    <string name="diagnostics_offline">离线版：日志仅保存在本机</string>
+    <string name="diagnostics_log_title">运行日志</string>
+    <string name="diagnostics_log_summary">把本机最近一次运行日志复制出来。日志只写在本机，不上传。</string>
+    <string name="diagnostics_log_action">复制到剪贴板</string>
+    <string name="diagnostics_log_empty">本机暂无日志</string>
+    <string name="diagnostics_log_copied">日志已复制</string>
 </resources>

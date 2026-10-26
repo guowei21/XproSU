@@ -1,4 +1,4 @@
-package com.ghostlock.pro.license
+package com.ghostlock.pro.data
 
 import android.content.Context
 import java.io.File
@@ -10,11 +10,12 @@ import java.util.Locale
 /**
  * 本机运行日志落盘。
  *
- * 服务端只保留 24 小时；而「跑到 14% 卡死、强制重启」这一类故障发生时，App 进程
- * 随时可能被杀掉——还留在内存队列里没发出去的行就永远消失了。所以每一行在入队的
- * 同时写一份到这里，重启后由用户点「立即上传」补交。
+ * 「跑到 14% 卡死、强制重启」这一类故障发生时，App 进程随时可能被杀掉——还留在
+ * 内存里的行就永远消失了。所以每一行在展示的同时写一份到这里，重启后仍能取出来
+ * 复制给开发者。
  *
  * 只服务排障，不做审计：单文件上限 512 KiB，超过就滚成 `.1` 重新开始，从不无限增长。
+ * 公开版没有服务端，日志只留在本机。
  */
 class DeviceLogStore(context: Context) {
 
@@ -40,12 +41,12 @@ class DeviceLogStore(context: Context) {
                     raf.fd.sync()
                 }
             } catch (_: Exception) {
-                // 磁盘满 / 无权限：放弃这一行，不影响激活和提权
+                // 磁盘满 / 无权限：放弃这一行，不影响提权
             }
         }
     }
 
-    /** 读取最近 [maxLines] 行，用于手动上传。空行和 NUL 填充都丢掉。 */
+    /** 读取最近 [maxLines] 行，用于导出。空行和 NUL 填充都丢掉。 */
     fun readTail(maxLines: Int = 800): List<String> {
         synchronized(lock) {
             if (!file.isFile) return emptyList()

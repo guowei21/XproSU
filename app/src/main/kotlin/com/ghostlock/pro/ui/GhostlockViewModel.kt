@@ -5,53 +5,43 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ghostlock.pro.BuildConfig
 import com.ghostlock.pro.R
+import com.ghostlock.pro.data.DeviceLogStore
 import com.ghostlock.pro.domain.model.KernelSnapshot
 import com.ghostlock.pro.domain.model.LogTone
 import com.ghostlock.pro.domain.repository.GhostlockRepository
 import com.ghostlock.pro.domain.usecase.FormatLogUseCase
 import com.ghostlock.pro.domain.usecase.LoadKernelSnapshotUseCase
 import com.ghostlock.pro.domain.usecase.RunExploitUseCase
-import com.ghostlock.pro.license.ActivationResult
-import com.ghostlock.pro.license.CardKey
-import com.ghostlock.pro.license.DeviceLogStore
-import com.ghostlock.pro.license.LicenseRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 sealed interface GhostlockEffect {
     data class Toast(val resourceId: Int) : GhostlockEffect
-
-    /** 需要展示服务端原文（例如服务端返回的拒绝原因）。 */
     data class Message(val text: String) : GhostlockEffect
     data class Clipboard(val text: String) : GhostlockEffect
     data class KeepScreenAwake(val enabled: Boolean) : GhostlockEffect
-
-    /** 授权已到期/被收回，需要退回登录窗口。 */
-    data object LicenseExpired : GhostlockEffect
 }
 
+/**
+ * 公开版 ViewModel：没有授权、没有心跳、没有服务端。
+ *
+ * 运行路径只有三步——取本机内核快照、把随包的偏移表解到私有目录、执行引擎。
+ * 日志面板常显，运行记录只落在本机。
+ */
 class GhostlockViewModel(
     private val repository: GhostlockRepository,
-    private val license: LicenseRepository,
     private val deviceLog: DeviceLogStore,
 ) : ViewModel() {
     private val effectChannel = Channel<GhostlockEffect>(Channel.BUFFERED)
     private val mutableState = MutableStateFlow(
-        GhostlockUiState(
-            deviceId = license.deviceId,
-            licenseConfigured = license.configured,
-            // 离线分支：日志面板始终显示，不再区分 Debug/Release。
-            logsVisible = true,
-        ),
+        GhostlockUiState(logsVisible = true),
     )
     private var initialized = false
     private var running = false
@@ -60,9 +50,7 @@ class GhostlockViewModel(
     private val runExploitUseCase = RunExploitUseCase(repository)
     private val formatLog = FormatLogUseCase()
 
-    /** 待上传的日志行；[logHeaderSent] 保证每个进程只带一次设备信息。 */
-    private val logQueue = ArrayDeque<String>()
-    private var logUploadJob: Job? = null
+    /** 每个进程只写一次设备头，后面的行都跟在它下面。 */
     private var logHeaderSent = false
 
     val state = mutableState.asStateFlow()
@@ -83,21 +71,14 @@ class GhostlockViewModel(
                 cpuPairLabels = repository.availableCpuPairLabels(),
                 cpuPairIndex = idx,
                 tcpRouteEnabled = repository.tcpRouteEnabled(),
-                // 离线分支：不做任何网络鉴权，直接视为已授权。
-                isLicensed = true,
-                licenseExpiry = "",
-                licensePermanent = true,
             )
         }
         viewModelScope.launch { refreshSnapshot() }
-        viewModelScope.launch { licenseLoop() }
 
-        // 启动即写一条本地标记并尝试上传：装上就能验证「落盘 + 上传」整条链路，
-        // 不必先跑一次提权。未激活/离线时上传失败是静默的，不影响使用。
+        // 启动即写一条本机标记：装上就能确认落盘链路可用，不必先跑一次提权。
         val bootLine = "[boot] ${Build.MODEL} / Android ${Build.VERSION.RELEASE} / " +
             "app ${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE})"
         deviceLog.append(bootLine)
-        viewModelScope.launch { license.uploadLogs(listOf(bootLine)) }
     }
 
     fun toggleSafeMode(enabled: Boolean) {
@@ -111,7 +92,7 @@ class GhostlockViewModel(
         mutableState.update { it.copy(tcpRouteEnabled = enabled) }
     }
 
-    /** [index] 对应 [GhostlockUiState.cpuPairLabels] 的下标；无「自动」项。 */
+    /** [index] 对应 [GhostlockUiState.cpuPairLabels] 的下标。 */
     fun onCpuPairSelected(index: Int) {
         val pairs = repository.availableCpuPairs()
         val pair = pairs.getOrNull(index) ?: return
@@ -123,7 +104,7 @@ class GhostlockViewModel(
         val snapshot = kernelSnapshot ?: return
         if (!snapshot.kernelSupported) {
             if (beginOperation()) {
-                if (BuildConfig.DEBUG) appendLog("result: exploit chain unsupported by this kernel")
+                appendLog("result: exploit chain unsupported by this kernel")
                 endOperation()
             }
             return
@@ -136,13 +117,9 @@ class GhostlockViewModel(
         startProgressCreep()
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // 离线分支：不请求服务端、不取会话密钥；引擎读随包 GLT1 容器。
-                val session: com.ghostlock.pro.license.SessionKey? = null
-                val code = runExploitUseCase(repository.selectedCpuPair(), ::appendLog, session)
+                val code = runExploitUseCase(repository.selectedCpuPair(), ::appendLog)
                 appendLog(if (code == 0) "result: exploit completed" else "result: exploit failed (exit code=$code)")
                 appendLog("exit code=$code")
-                // 运行结束立即把队列清空，别把最后几行留到 8 秒窗口里。
-                flushLogsNow()
                 mutableState.update {
                     it.copy(
                         lastRunFailed = code != 0,
@@ -150,15 +127,9 @@ class GhostlockViewModel(
                     )
                 }
                 if (code != 0) {
-                    if (code == 3) {
-                        // 路由看门狗主动退出：没卡死，换条路由就能重试。
-                        appendLog("result: route timeout (exit 3)")
-                        send(GhostlockEffect.Toast(R.string.run_route_timeout))
-                    } else {
-                        // 竞速窗口没跑到完成（典型：卡在 W1/锁核后的内核写入）：
-                        // 这类失败用户无法自救，明确提示降级。
-                        send(GhostlockEffect.Toast(R.string.run_unsupported_version))
-                    }
+                    // 竞速窗口没跑到完成（典型：卡在 W1/锁核后的内核写入）：
+                    // 这类失败用户无法自救，明确提示降级。
+                    send(GhostlockEffect.Toast(R.string.run_unsupported_version))
                 }
             } finally {
                 endOperation()
@@ -181,174 +152,20 @@ class GhostlockViewModel(
     fun clearLogs() = mutableState.update { it.copy(logLines = emptyList()) }
 
     /**
-     * 手动补交本机日志。
+     * 导出本机日志。
      *
-     * 典型场景：运行卡在某一阶段、机器被强制重启，自动上传的队列没来得及清空。
-     * 这些行已经逐行落盘（[DeviceLogStore]），重启后点一下就补交。
+     * 典型的排障场景是运行卡死、机器被强制重启，App 里的滚动日志随之消失；
+     * 这些行已经逐行落盘（[DeviceLogStore]），重启后仍然可以复制出来。
      */
-    fun uploadDiagnosticLogs() {
+    fun exportDiagnosticLogs() {
         viewModelScope.launch {
-            val lines = withContext(Dispatchers.IO) { deviceLog.readTail(LOG_MANUAL_MAX_LINES) }
+            val lines = withContext(Dispatchers.IO) { deviceLog.readTail(LOG_EXPORT_MAX_LINES) }
             if (lines.isEmpty()) {
-                send(GhostlockEffect.Toast(R.string.diagnostics_upload_empty))
+                send(GhostlockEffect.Toast(R.string.diagnostics_log_empty))
                 return@launch
             }
-            if (!license.isActivated() || OFFLINE_MODE) {
-                send(GhostlockEffect.Toast(R.string.diagnostics_offline))
-                return@launch
-            }
-            var ok = true
-            lines.chunked(LOG_SERVER_BATCH_MAX).forEach { chunk ->
-                if (!license.uploadLogs(chunk)) ok = false
-            }
-            send(
-                GhostlockEffect.Toast(
-                    if (ok) R.string.diagnostics_uploaded else R.string.diagnostics_upload_failed,
-                ),
-            )
-        }
-    }
-
-    /** 把当前队列里剩下的日志立刻发出去（运行结束/收尾时调用）。 */
-    private suspend fun flushLogsNow() {
-        val batch = synchronized(logQueue) {
-            if (logQueue.isEmpty()) {
-                emptyList<String>()
-            } else {
-                val out = ArrayList<String>(logQueue.size)
-                while (logQueue.isNotEmpty()) out.add(logQueue.removeFirst())
-                out
-            }
-        }
-        if (batch.isNotEmpty()) license.uploadLogs(batch)
-    }
-
-    // 识别码不再对外展示，复制动作随之移除；保留 action 空实现兼容动作层。
-
-    /**
-     * 到期检查入口：到期即收回并发出 [GhostlockEffect.LicenseExpired]。
-     * 返回 false 表示已不再授权。
-     */
-    suspend fun checkLicenseNow(): Boolean = true
-
-    /** 授权被收回：离线分支不会发生。 */
-    fun onLicenseRevoked() {
-        mutableState.update {
-            it.copy(isLicensed = true, licenseExpiry = "", licensePermanent = true)
-        }
-    }
-
-    /** 离线分支：永远视为已授权。 */
-    fun isActivated(): Boolean = true
-
-    /**
-     * 回前台时的在线核对：离线分支不做网络请求。
-     */
-    suspend fun verifyOnResume() = Unit
-
-    fun openActivateDialog() {
-        if (OFFLINE_MODE) return
-        if (state.value.activating) return
-        mutableState.update {
-            it.copy(
-                dialogVisible = true,
-                dialogType = DialogType.INPUT,
-                dialogTitleRes = R.string.activate_dialog_title,
-                dialogMessageRes = R.string.activate_dialog_hint,
-                dialogInput = "",
-            )
-        }
-    }
-
-    fun onDialogInputChange(value: String) = mutableState.update { it.copy(dialogInput = value) }
-
-    fun onDialogConfirm(value: String) {
-        if (state.value.dialogType != DialogType.INPUT) return
-        if (state.value.activating) return
-        val key = CardKey.normalize(value)
-        if (key.isEmpty()) {
-            send(GhostlockEffect.Toast(R.string.license_card_empty))
-            return
-        }
-        mutableState.update { it.copy(activating = true) }
-        viewModelScope.launch {
-            when (val result = license.activate(key)) {
-                is ActivationResult.Ok -> {
-                    mutableState.update {
-                        it.copy(
-                            activating = false,
-                            isLicensed = true,
-                            licenseExpiry = result.record.expiry,
-                            licensePermanent = result.record.expireAt == 0L,
-                        )
-                    }
-                    if (BuildConfig.DEBUG) appendLog("license activated on ${license.deviceId}")
-                    send(GhostlockEffect.Toast(R.string.activate_success))
-                    dismissDialog()
-                }
-
-                is ActivationResult.Rejected -> {
-                    mutableState.update { it.copy(activating = false) }
-                    send(GhostlockEffect.Message(result.message))
-                }
-
-                is ActivationResult.Unreachable -> {
-                    mutableState.update { it.copy(activating = false) }
-                    send(GhostlockEffect.Message(result.message))
-                }
-            }
-        }
-    }
-
-    fun onDialogDismiss() = dismissDialog()
-
-    fun onDialogDismissFinished() {
-        if (!state.value.dialogVisible) {
-            clearDialog()
-        }
-    }
-
-    override fun onCleared() {
-        progressJob?.cancel()
-        repository.close()
-        effectChannel.close()
-        super.onCleared()
-    }
-
-    /**
-     * 授权保活：定期 heartbeat + info 刷新，服务端明确拒绝或本地到期时收回授权。
-     * 未配置服务或未激活时直接返回，不产生无谓请求。
-     */
-    private suspend fun licenseLoop() {
-        if (OFFLINE_MODE) return
-        if (!license.configured) return
-        while (viewModelScope.isActive) {
-            delay(HEARTBEAT_INTERVAL_MS)
-            if (!license.isActivated()) continue
-            val refreshed = license.refresh()
-            if (refreshed == null) {
-                // 服务端收回或离线时本地到期：clear 后立刻同步 UI 并退回登录。
-                val activated = license.isActivated()
-                mutableState.update {
-                    it.copy(
-                        isLicensed = activated,
-                        licenseExpiry = if (activated) it.licenseExpiry else "",
-                        licensePermanent = if (activated) it.licensePermanent else false,
-                    )
-                }
-                if (!activated) {
-                    mutableState.update { it.copy(licenseExpiry = "", licensePermanent = false) }
-                    openActivateDialog()
-                }
-                continue
-            }
-            mutableState.update {
-                it.copy(
-                    isLicensed = license.isActivated(),
-                    licenseExpiry = refreshed.expiry,
-                    licensePermanent = refreshed.expireAt == 0L,
-                )
-            }
+            send(GhostlockEffect.Clipboard(lines.joinToString(separator = "\n")))
+            send(GhostlockEffect.Toast(R.string.diagnostics_log_copied))
         }
     }
 
@@ -366,93 +183,31 @@ class GhostlockViewModel(
         }
     }
 
-    private fun dismissDialog() {
-        mutableState.update { it.copy(dialogVisible = false) }
-    }
-
-    private fun clearDialog() {
-        mutableState.update {
-            it.copy(
-                dialogVisible = false,
-                dialogType = DialogType.NONE,
-                dialogTitleRes = 0,
-                dialogMessageRes = 0,
-                dialogInput = "",
-                activating = false,
-            )
-        }
-    }
-
-    /**
-     * 记录一行引擎输出。
-     *
-     * 交付版（[GhostlockUiState.logsVisible] 为 false）只推进进度，不留存明文日志。
-     */
+    /** 记录一行引擎输出：进滚动日志，同时落盘。 */
     private fun appendLog(line: String) {
         val stage = stageProgress(line)
-        val uiLine = if (state.value.logsVisible) {
-            val entry = formatLog(line)
-            GhostlockLogLine(entry.text, toneColor(entry.tone))
-        } else {
-            null
-        }
+        val entry = formatLog(line)
+        val uiLine = GhostlockLogLine(entry.text, toneColor(entry.tone))
         mutableState.update {
             val advanced = stage > it.progress
             it.copy(
-                logLines = if (uiLine != null) it.logLines + uiLine else it.logLines,
+                logLines = it.logLines + uiLine,
                 progress = if (advanced) stage else it.progress,
                 progressLabelRes = if (advanced) stageLabelRes(line) else it.progressLabelRes,
             )
         }
-        enqueueLog(line)
-    }
-
-    /**
-     * 把一行日志排进上传队列。
-     *
-     * 交付版界面不展示明文日志，但售后排障仍然需要它：批次每
-     * [LOG_FLUSH_INTERVAL_MS] 发一次，队列有上限、上传失败静默丢弃——
-     * 日志永远不能影响激活、心跳或提权本身。
-     */
-    private fun enqueueLog(line: String) {
-        val persist = ArrayList<String>(2)
-        synchronized(logQueue) {
-            if (!logHeaderSent) {
-                logHeaderSent = true
-                val header = "[device] ${Build.MODEL} / Android ${Build.VERSION.RELEASE} / " +
-                    "kernel ${state.value.kernelRelease} / app ${BuildConfig.VERSION_NAME}"
-                logQueue.addLast(header)
-                persist.add(header)
-            }
-            while (logQueue.size >= LOG_QUEUE_MAX) logQueue.removeFirst()
-            logQueue.addLast(line)
-            persist.add(line)
+        if (!logHeaderSent) {
+            logHeaderSent = true
+            deviceLog.append(
+                "[device] ${Build.MODEL} / Android ${Build.VERSION.RELEASE} / " +
+                    "kernel ${state.value.kernelRelease} / app ${BuildConfig.VERSION_NAME}",
+            )
         }
-        // 每行都先落盘：进程被杀之后，这几行还留在本地等用户手动补交。
-        persist.forEach(deviceLog::append)
-        if (logUploadJob?.isActive != true) {
-            logUploadJob = viewModelScope.launch {
-                while (isActive) {
-                    delay(LOG_FLUSH_INTERVAL_MS)
-                    val batch = synchronized(logQueue) {
-                        if (logQueue.isEmpty()) {
-                            emptyList<String>()
-                        } else {
-                            val out = ArrayList<String>(minOf(logQueue.size, LOG_BATCH_MAX))
-                            while (out.size < LOG_BATCH_MAX && logQueue.isNotEmpty()) {
-                                out.add(logQueue.removeFirst())
-                            }
-                            out
-                        }
-                    }
-                    if (batch.isNotEmpty()) license.uploadLogs(batch)
-                }
-            }
-        }
+        deviceLog.append(line)
     }
 
     private fun startProgressCreep() {
-        // 交付版进度完全由引擎阶段行驱动（见 stageProgress），不做时间爬坡：
+        // 进度完全由引擎阶段行驱动（见 stageProgress），不做时间爬坡：
         // 没有阶段输出时进度停在上一阶段，避免「一口气冲到 95%」的假进度。
         progressJob?.cancel()
     }
@@ -512,6 +267,13 @@ class GhostlockViewModel(
         mutableState.update { it.copy(running = false, executionSheetDismissible = true) }
     }
 
+    override fun onCleared() {
+        progressJob?.cancel()
+        repository.close()
+        effectChannel.close()
+        super.onCleared()
+    }
+
     private fun send(effect: GhostlockEffect) {
         effectChannel.trySend(effect)
     }
@@ -525,20 +287,7 @@ class GhostlockViewModel(
     }
 
     private companion object {
-        /** 离线分支：不做网络鉴权，日志面板常显，引擎读随包 GLT1 容器。 */
-        const val OFFLINE_MODE = true
-
-        /** 尚未手动选择核心对。 */
-        const val NO_PAIR_INDEX = -1
-        const val HEARTBEAT_INTERVAL_MS = 60 * 1000L
-
-        /** 日志上传：8 秒一批、每批最多 60 行、进程内最多排队 600 行。 */
-        const val LOG_FLUSH_INTERVAL_MS = 8 * 1000L
-        const val LOG_BATCH_MAX = 60
-        const val LOG_QUEUE_MAX = 600
-
-        /** 手动补交：本地最多取 800 行，服务端单次上限 200 行。 */
-        const val LOG_MANUAL_MAX_LINES = 800
-        const val LOG_SERVER_BATCH_MAX = 200
+        /** 导出：本地最多取 800 行。 */
+        const val LOG_EXPORT_MAX_LINES = 800
     }
 }

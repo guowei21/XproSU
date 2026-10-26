@@ -2,7 +2,6 @@ package com.ghostlock.pro.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.Intent
 import android.os.Bundle
 import android.view.WindowInsetsController
 import android.view.WindowManager
@@ -14,20 +13,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.ghostlock.pro.GhostlockApplication
 import com.ghostlock.pro.R
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel by viewModels<GhostlockViewModel> {
         viewModelFactory {
             initializer {
                 val app = application as GhostlockApplication
-                GhostlockViewModel(app.createRepository(), app.license, app.deviceLog)
+                GhostlockViewModel(app.createRepository(), app.deviceLog)
             }
         }
     }
@@ -35,23 +31,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         viewModel.initialize()
-        // 主界面即入口：未激活时 UI 完全可用，激活入口在授权卡片的「激活卡密」。
-        // 未激活时直接弹一次激活框，减少一次点击。
-        if (!viewModel.isActivated()) {
-            viewModel.openActivateDialog()
-        }
+        // 主界面即入口：没有激活页，没有登录，打开就能用。
         setContent {
             GhostlockRoute(viewModel, ::handleEffect)
         }
         setupSystemBars()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // 回前台时向服务端核对一次卡密状态（删卡/封卡/过期立刻生效）。
-        // 有本地凭据且核对失败才退回未激活态并弹激活框；离线时保持界面，
-        // 由 fetchSessionKey 的 fail-closed 兜底（没有 Kd 就提不了权）。
-        lifecycleScope.launch { viewModel.verifyOnResume() }
     }
 
     private fun handleEffect(effect: GhostlockEffect) {
@@ -68,8 +52,6 @@ class MainActivity : ComponentActivity() {
             } else {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
-
-            GhostlockEffect.LicenseExpired -> viewModel.onLicenseRevoked()
         }
     }
 
@@ -102,13 +84,6 @@ private fun GhostlockRoute(
     LaunchedEffect(viewModel.effects) {
         viewModel.effects.collect(onEffect)
     }
-    // 前台周期性到期检查：付费卡也可能带限期，到点立即收回并退回登录。
-    LaunchedEffect(state.isLicensed) {
-        while (state.isLicensed) {
-            if (!viewModel.checkLicenseNow()) break
-            delay(30_000)
-        }
-    }
     GhostlockApp(
         state = state,
         actions = object : GhostlockActions {
@@ -116,15 +91,10 @@ private fun GhostlockRoute(
             override fun onCloseExecutionSheet() = viewModel.onCloseExecutionSheet()
             override fun onCopyLogs() = viewModel.copyLogs()
             override fun onClearLogs() = viewModel.clearLogs()
-            override fun onUploadLogs() = viewModel.uploadDiagnosticLogs()
-            override fun onOpenActivateDialog() = viewModel.openActivateDialog()
+            override fun onExportLogs() = viewModel.exportDiagnosticLogs()
             override fun onSafeModeChanged(enabled: Boolean) = viewModel.toggleSafeMode(enabled)
             override fun onTcpRouteChanged(enabled: Boolean) = viewModel.toggleTcpRoute(enabled)
             override fun onCpuPairSelected(index: Int) = viewModel.onCpuPairSelected(index)
-            override fun onDialogInputChange(value: String) = viewModel.onDialogInputChange(value)
-            override fun onDialogConfirm(value: String) = viewModel.onDialogConfirm(value)
-            override fun onDialogDismiss() = viewModel.onDialogDismiss()
-            override fun onDialogDismissFinished() = viewModel.onDialogDismissFinished()
         },
     )
 }
