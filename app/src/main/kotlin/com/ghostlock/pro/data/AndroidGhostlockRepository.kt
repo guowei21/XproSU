@@ -2,6 +2,7 @@ package com.ghostlock.pro.data
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.system.Os
 import com.ghostlock.pro.domain.model.CpuPair
@@ -19,6 +20,7 @@ import java.nio.charset.StandardCharsets
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import java.util.zip.ZipFile
 
 /**
  * Android implementation of the domain repository. All platform I/O lives here.
@@ -34,6 +36,10 @@ class AndroidGhostlockRepository(
         const val OffsetsFileName = "offsets.json"
         /** AES-256-GCM 密封的同一张表，见 tools/pack_offsets_local.py。 */
         const val OffsetsAsset = "offsets.enc"
+        /** 各家管理器把 ksud 本体放在 `lib/<abi>/` 下，名字一直是这个。 */
+        const val KsudLibrary = "libksud.so"
+        /** 复制出来的临时文件名；引擎脚本按 `$HOME_DIR/ksud` 找它。 */
+        const val KsudName = "ksud"
         const val KsuLogName = ".ghostlock_ksu.log"
 
         const val KEY_TCP_ROUTE = "tcp_route"
@@ -304,23 +310,70 @@ class AndroidGhostlockRepository(
     private fun firstValidProperty(vararg keys: String): String? =
         keys.asSequence().firstNotNullOfOrNull { validDeviceName(systemProperty(it)) }
 
+    /**
+     * 把已安装管理器里的 `libksud.so` 取出来，落到 `$HOME_DIR/ksud`。
+     *
+     * 不再按包名列表匹配：DikSU 的管理器可以在设备上改包名，每次安装都是随机的
+     * `com.xxxxx.yyyyy`，写死的包名注定找不到。这里改成枚举已安装应用，谁的
+     * `nativeLibraryDir` 里有 `libksud.so` 就用谁；lib 没被抽出来（`extractNativeLibs`
+     * 关闭）时直接从 APK 里读 `lib/<abi>/libksud.so`。
+     *
+     * KernelSU / ReSukiSU / KowSU / DikSU 以及它们的改名版走的是同一条路 —— 这些
+     * 管理器的 `libksud.so` 就是 ksud 本体，`late-load` 也由它提供。
+     */
     private fun prepareKsud(workDir: File, onLog: (String) -> Unit): File? {
-        val packages = listOf("me.weishu.kernelsu.pr", "me.weishu.kernelsu", "com.resukisu.resukisu", "com.kowx712.supermanager")
-        var installed = false
-        for (packageName in packages) {
-            val appInfo = runCatching { appContext.packageManager.getApplicationInfo(packageName, 0) }.getOrNull() ?: continue
-            installed = true
-            val source = File(appInfo.nativeLibraryDir, "libksud.so")
-            if (!source.isFile) continue
-            val output = File(workDir, "ksud")
+        val output = File(workDir, KsudName)
+        var sawManager = false
+        for (info in installedManagerCandidates()) {
+            val bytes = readKsudLibrary(info) ?: continue
+            sawManager = true
             runCatching {
-                source.inputStream().use { input -> output.outputStream().use { input.copyTo(it) } }
+                output.writeBytes(bytes)
                 runCatching { Os.chmod(output.absolutePath, 448) }
+                onLog("ksud source: ${info.packageName} (${bytes.size} bytes)")
                 return output
             }.onFailure { onLog("copy ksud failed: ${it.message}") }
         }
-        if (!installed) onLog("KernelSU/ReSukiSU/KowSU app not installed")
+        if (!sawManager) {
+            onLog("no kernel manager with libksud.so found (KernelSU / ReSukiSU / KowSU / DikSU)")
+        }
         return null
+    }
+
+    /**
+     * 所有可能带 ksud 的已安装应用。
+     *
+     * 顺序上优先名字里带 ksu/sukisu/diksu 的包，其余按安装顺序；改名的管理器
+     * 虽然匹配不到关键字，仍然会作为候选被检查。
+     */
+    private fun installedManagerCandidates(): List<ApplicationInfo> {
+        val all = runCatching {
+            appContext.packageManager.getInstalledApplications(0)
+        }.getOrDefault(emptyList())
+        return all.sortedByDescending { info ->
+            val name = info.packageName.lowercase(Locale.ROOT)
+            when {
+                name.contains("diksu") -> 3
+                name.contains("kernelsu") || name.contains("sukisu") -> 2
+                name.contains("ksu") -> 1
+                else -> 0
+            }
+        }
+    }
+
+    /** 读管理器的 `libksud.so`：优先已抽出的 native 目录，其次直接读 APK。 */
+    private fun readKsudLibrary(info: ApplicationInfo): ByteArray? {
+        val extracted = File(info.nativeLibraryDir, KsudLibrary)
+        if (extracted.isFile) {
+            return runCatching { extracted.readBytes() }.getOrNull()
+        }
+        val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: return null
+        return runCatching {
+            ZipFile(info.sourceDir).use { zip ->
+                val entry = zip.getEntry("lib/$abi/$KsudLibrary") ?: return@use null
+                zip.getInputStream(entry).use { it.readBytes() }
+            }
+        }.getOrNull()
     }
 
     private suspend fun runProcess(
