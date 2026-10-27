@@ -323,6 +323,17 @@ class AndroidGhostlockRepository(
      */
     private fun prepareKsud(workDir: File, onLog: (String) -> Unit): File? {
         val output = File(workDir, KsudName)
+        // 随包的那份优先：版本固定，不依赖设备上装了哪个管理器，也不需要联网。
+        // 它是 DikSU 的 ksud 本体（GPL-3.0，源码见 README），被 exec 调用而不是加载。
+        val bundled = readKsudLibrary(appContext.applicationInfo)
+        if (bundled != null) {
+            runCatching {
+                output.writeBytes(bundled)
+                runCatching { Os.chmod(output.absolutePath, 448) }
+                onLog("ksud source: bundled (${bundled.size} bytes)")
+                return output
+            }.onFailure { onLog("copy bundled ksud failed: ${it.message}") }
+        }
         var sawManager = false
         for (info in installedManagerCandidates()) {
             val bytes = readKsudLibrary(info) ?: continue

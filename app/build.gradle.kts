@@ -12,7 +12,7 @@ val appVersionName = "1.1"
 
 // 原构建用 `git rev-list --count HEAD`（= 93）。从无 .git 的源码目录构建时会回退成 1，
 // 导致无法覆盖安装已装的版本。故改为手工固定；升级时手工递增。
-val gitVersionCode = 108
+val gitVersionCode = 109
 
 android {
     namespace = "com.ghostlock.pro"

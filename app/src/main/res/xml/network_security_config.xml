@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  只有一件事需要明文 HTTP：WebView 打开 ksud 在回环地址上开的管理页面。
+  其余一律不放行，所以这里既没有全局 cleartextTrafficPermitted，也没有其他域名。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

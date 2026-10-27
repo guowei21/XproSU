@@ -75,34 +75,56 @@ python tools\pack_offsets_local.py app\src\main\assets\offsets.enc `
   运行按钮只取决于内核是否在支持列表里。
 - **日志常显**：Release 也显示完整运行日志与终端卡片；「维护 → 运行日志 →
   复制到剪贴板」可以把落盘的那份取出来（每行 fsync，卡死重启后仍在）。
-- **不联网**：`AndroidManifest.xml` 不申请 `INTERNET`。
+- **只走回环**：`INTERNET` 权限仅为 WebView 打开 `127.0.0.1` 上的管理页面；App 自身
+  不发任何外部请求（network security config 只对回环地址放行明文）。
 - **W1 路由可切换**：默认 `mcast`（真机验证过的路线），打开「TCP 路由」走 socket。
   两条路都会在日志里打印 `route=…` 和 `xxx route start`。
 - **无超时/看门狗**：引擎的 futex 竞速没有人为截止时间 —— 加超时会把本来能完成的
   路线提前打断（103 的失败原因）。
 
-### 4.1 最后一步：把 su 移交给管理器（KernelSU / ReSukiSU / KowSU / DikSU）
-
-提权只到「拿到 uid 0」为止；长期可用的 root 由管理器接管：引擎以临时 root 身份执行
-管理器自带的 `ksud late-load`，由它加载 `kernelsu.ko`、装模块、拉起管理器。
+### 4.1 分工：APK 只负责提权，管理交给 ksud 的 WebUI
 
 ```
-App：枚举已安装应用 → 哪个有 lib/<abi>/libksud.so → 复制成 $filesDir/ksud
-引擎：$HOME_DIR/ksud → /data/adb/ksud → find /data/app -name libksud.so
-      → /data/local/tmp/ksud → /data/adb/ksu/bin/ksud
-      "$KSUD" late-load --kmi "$KMI" --allow-shell
-      grep kernelsu /proc/modules          ← 等模块进树
+APK                                    设备                              浏览器 / WebView
+ ├─ assets/offsets.enc ──本地解密──▶ files/offsets.json
+ ├─ jniLibs/libksud.so ──复制──▶ files/ksud
+ └─ exec libghostlock.so ─────────▶ W1 → vr.ko → W2 → W3 → root
+                                     └─ ksud late-load（加载 kernelsu.ko）
+                                     └─ ksud webui --daemon --idle-timeout 0
+                                           └─ 127.0.0.1:<port> + token ──▶ 管理页面
 ```
+
+提权只到「拿到 uid 0」为止；超级用户、模块、文件管理、终端这些日常管理全部由
+`ksud` 内建的 HTTP 服务提供，App 不实现也不接触这些逻辑。
+
+- **随包带 ksud**：`app/src/main/jniLibs/arm64-v8a/libksud.so` 是 DikSU `v3.3.0-57`
+  的 ksud 二进制（6.4 MB，内含 `android14-6.1_kernelsu.ko` 与 WebUI 前端）。App 启动
+  提权前把它复制成 `files/ksud`，不需要设备上预装任何管理器。
+- **不按包名找管理器**：DikSU 的管理器可以在设备上改成随机包名；只有在没带随包副本时
+  才回落到扫描已安装应用的 `libksud.so`（`extractNativeLibs=false` 时直接读 APK）。
+- **不传 `--package-name`**：`libksud.so` 里烤着它自己的管理器包名，late-load 末尾用它
+  `am start`；传一个猜的包名只会拉错。
+- **管理页面只对本机开放**：ksud 绑 `127.0.0.1`，令牌落在 `/data/adb/ksu/webui.token`
+  （0600 root）。root 脚本把它拼成 `http://127.0.0.1:<port>/?t=<token>` 写进
+  `files/webui.url`（0600，属主是本 App），App 的「管理」按钮直接用 WebView 打开。
+  这也是 `INTERNET` 权限唯一的用途，network security config 只对 `127.0.0.1` 放行明文。
+- **重启后失效**：`late-load` 是内存态，不刷 boot 就没有持久 root；每次要用管理页面
+  先跑一次「立即获取 Root 权限」。页面还活着的时候重复打开没问题（端口与令牌会复用）。
 
 DikSU 的适配点：
 
 | 差异 | 处理 |
 |---|---|
-| 管理器包名可在设备上随机化（`com.xxxxx.yyyyy`） | 不再按包名列表匹配：扫描全部已安装应用的 `libksud.so`；`extractNativeLibs` 关闭时直接从 APK 读 `lib/<abi>/libksud.so` |
-| `libksud.so` 里烤着它自己的管理器包名 | **不传** `--package-name`：late-load 末尾会 `am start <包名>/…MainActivity`，传错就拉不起改名后的管理器 |
+| 管理器包名可在设备上随机化（`com.xxxxx.yyyyy`） | 不按包名匹配：优先用随包的 `libksud.so`，其次扫描全部已安装应用 |
+| `libksud.so` 里烤着它自己的管理器包名 | **不传** `--package-name` |
 | 内核模块仍是 `kernelsu.ko`，路径仍是 `/data/adb/ksu` | 脚本里的 `grep kernelsu /proc/modules`、模块目录逻辑不用改 |
-| 官方构建的 ko 矩阵包含 `android14-6.1` | 本机 KMI 正好命中；自编译 DikSU 时须用自己的管理器签名重建 lkm，否则内核不认管理器 |
-| 支持无管理器的 WebUI 模式 | 没有 `libksud.so` 时回落到 `/data/adb/ksud`（上次安装留下的守护进程） |
+| 官方 ko 矩阵包含 `android14-6.1` | 本机 KMI 正好命中；换成别的内核要换对应 KMI 的 ksud |
+| WebUI 需要令牌 | root 脚本读完 `webui.port` / `webui.token` 后写进 App 私有目录 |
+
+> **许可**：`libksud.so` 来自 [wuhudiao/DikSU](https://github.com/wuhudiao/DikSU)
+> （GPL-3.0），以独立可执行程序的形式随包分发、被 `exec` 调用，未与 App 代码链接；
+> 对应源码见该仓库 `userspace/ksud/`。App 自身仍是 Apache-2.0。若要二次分发，
+> 请一并保留 DikSU 的 GPL-3.0 许可与源码出处。
 
 ---
 
@@ -126,7 +148,7 @@ $env:ANDROID_HOME = '<Android SDK>'
 .\gradlew.bat assembleRelease --no-daemon
 ```
 
-产物：`app/build/outputs/apk/release/XproSU-v1.1(108)-arm64-v8a-release.apk`
+产物：`app/build/outputs/apk/release/XproSU-v1.1(109)-arm64-v8a-release.apk`
 
 没有正式 keystore 时 release **直接构建失败**，不会回退到 debug 签名 ——
 debug 证书是公开的，任何人都能签一个同名包覆盖安装并继承 `/data/data` 下的数据。
@@ -137,7 +159,7 @@ debug 证书是公开的，任何人都能签一个同名包覆盖安装并继�
 
 ## 6. 与上游 `50d2b72` 的差异
 
-1. `app/build.gradle.kts` —— `versionCode` 固定为手工值（当前 `108`），
+1. `app/build.gradle.kts` —— `versionCode` 固定为手工值（当前 `109`），
    因为无 `.git` 目录构建时 `git rev-list --count HEAD` 会回退成 `1`。
 2. `app/.../data/AndroidGhostlockRepository.kt` —— 运行前解密 `assets/offsets.enc`；
    路由由设置页控制（默认 `mcast`）。

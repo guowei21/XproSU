@@ -41,4 +41,9 @@
     <string name="diagnostics_log_action">Copy to clipboard</string>
     <string name="diagnostics_log_empty">No log stored on this device yet</string>
     <string name="diagnostics_log_copied">Log copied</string>
+
+    <string name="webui_title">DikSU manager</string>
+    <string name="webui_summary">Superuser, modules, files and terminal are served by ksud on 127.0.0.1 after a successful run.</string>
+    <string name="webui_open">Open manager</string>
+    <string name="webui_unavailable">No manager session yet. Run “Get Root Privilege” first.</string>
 </resources>

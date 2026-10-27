@@ -105,6 +105,7 @@ interface GhostlockActions {
     fun onCopyLogs()
     fun onClearLogs() = Unit
     fun onExportLogs() = Unit
+    fun onOpenWebUi() = Unit
     fun onSafeModeChanged(enabled: Boolean)
     fun onTcpRouteChanged(enabled: Boolean) = Unit
     fun onCpuPairSelected(index: Int) = Unit
@@ -204,6 +205,7 @@ private fun PortraitContent(
                 cpuPairIndex = state.cpuPairIndex,
                 onCpuPairSelected = actions::onCpuPairSelected,
                 onExportLogs = actions::onExportLogs,
+                onOpenWebUi = actions::onOpenWebUi,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -271,6 +273,7 @@ private fun LandscapeContent(
                 cpuPairIndex = state.cpuPairIndex,
                 onCpuPairSelected = actions::onCpuPairSelected,
                 onExportLogs = actions::onExportLogs,
+                onOpenWebUi = actions::onOpenWebUi,
                 modifier = Modifier.fillMaxWidth(),
             )
             if (state.logsVisible) {
@@ -554,6 +557,7 @@ private fun MaintenanceCard(
     cpuPairIndex: Int,
     onCpuPairSelected: (Int) -> Unit,
     onExportLogs: () -> Unit,
+    onOpenWebUi: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Card(modifier = modifier) {
@@ -592,6 +596,40 @@ private fun MaintenanceCard(
                     labels = cpuPairLabels,
                     selectedIndex = cpuPairIndex,
                     onSelect = onCpuPairSelected,
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f)),
+            )
+            // 提权之后的管理入口：页面由 ksud 提供，App 只负责把它打开。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.webui_title),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MiuixTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = stringResource(R.string.webui_summary),
+                    fontSize = 12.sp,
+                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+                TextButton(
+                    text = stringResource(R.string.webui_open),
+                    onClick = onOpenWebUi,
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
                 )
             }
 

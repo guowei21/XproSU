@@ -2,6 +2,7 @@ package com.ghostlock.pro.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Intent
 import android.os.Bundle
 import android.view.WindowInsetsController
 import android.view.WindowManager
@@ -33,7 +34,13 @@ class MainActivity : ComponentActivity() {
         viewModel.initialize()
         // 主界面即入口：没有激活页，没有登录，打开就能用。
         setContent {
-            GhostlockRoute(viewModel, ::handleEffect)
+            GhostlockRoute(
+                viewModel = viewModel,
+                onEffect = ::handleEffect,
+                onOpenWebUi = {
+                    startActivity(Intent(this, WebUiActivity::class.java))
+                },
+            )
         }
         setupSystemBars()
     }
@@ -79,6 +86,7 @@ class MainActivity : ComponentActivity() {
 private fun GhostlockRoute(
     viewModel: GhostlockViewModel,
     onEffect: (GhostlockEffect) -> Unit,
+    onOpenWebUi: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(viewModel.effects) {
@@ -92,6 +100,7 @@ private fun GhostlockRoute(
             override fun onCopyLogs() = viewModel.copyLogs()
             override fun onClearLogs() = viewModel.clearLogs()
             override fun onExportLogs() = viewModel.exportDiagnosticLogs()
+            override fun onOpenWebUi() = onOpenWebUi()
             override fun onSafeModeChanged(enabled: Boolean) = viewModel.toggleSafeMode(enabled)
             override fun onTcpRouteChanged(enabled: Boolean) = viewModel.toggleTcpRoute(enabled)
             override fun onCpuPairSelected(index: Int) = viewModel.onCpuPairSelected(index)
