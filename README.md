@@ -128,7 +128,7 @@ APK                                    设备                              浏�
 - **不传 `--package-name`**：`libksud.so` 里烤着它自己的管理器包名，late-load 末尾用它
   `am start`；传一个猜的包名只会拉错。
 - **管理页面只对本机开放**：ksud 绑 `127.0.0.1`，令牌落在 `/data/adb/ksu/webui.token`
-  （0600 root）。root 脚本把它拼成 `http://127.0.0.1:<port>/?t=<token>` 写进
+  （0600 root）。root 脚本把它拼成 `http://127.0.0.1:<port>/?k=<token>` 写进
   `files/webui.url`（0600，属主是本 App），App 的「管理」按钮直接用 WebView 打开。
   这也是 `INTERNET` 权限唯一的用途，network security config 只对 `127.0.0.1` 放行明文。
 - **重启后失效**：`late-load` 是内存态，不刷 boot 就没有持久 root；每次要用管理页面

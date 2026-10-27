@@ -70,6 +70,14 @@ class WebUiActivity : ComponentActivity() {
                     }
                 }
 
+                override fun onPageFinished(view: WebView, url: String) {
+                    // 页面在 pagehide 时会 sendBeacon('/api/close')，ksud 收到就轮换
+                    // 令牌；拦掉这个调用，存下来的地址才能在关闭页面后继续用。
+                    view.evaluateJavascript(
+                        "navigator.sendBeacon=function(){return true};", null,
+                    )
+                }
+
                 override fun shouldInterceptRequest(
                     view: WebView,
                     request: WebResourceRequest,

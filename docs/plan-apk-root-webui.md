@@ -135,7 +135,7 @@ if [ -x "$KSUD" ] && grep -q kernelsu /proc/modules 2>/dev/null; then
   WPORT=$(cat /data/adb/ksu/webui.port 2>/dev/null)
   WTOK=$(cat /data/adb/ksu/webui.token 2>/dev/null)
   if [ -n "$WPORT" ] && [ -n "$WTOK" ]; then
-    printf 'http://127.0.0.1:%s/?t=%s' "$WPORT" "$WTOK" > "$HOME_DIR/webui.url"
+    printf 'http://127.0.0.1:%s/?k=%s' "$WPORT" "$WTOK" > "$HOME_DIR/webui.url"
     chown "$(stat -c %u "$HOME_DIR")" "$HOME_DIR/webui.url" 2>/dev/null
     chmod 600 "$HOME_DIR/webui.url" 2>/dev/null
   fi
@@ -164,7 +164,7 @@ fi
 - `ksud webui --daemon --idle-timeout 0`：绑定随机端口（持久化到 `/data/adb/ksu/webui.port`），
   绑定完成后再 daemonize，所以脚本返回即可读端口。
 - 令牌：`/data/adb/ksu/webui.token`，`load_or_create_token()` 首次生成、之后复用。
-- 入口 URL：`http://127.0.0.1:<port>/?t=<token>`（`t` 是 ksud 认的查询参数，落到 cookie）。
+- 入口 URL：`http://127.0.0.1:<port>/?k=<token>`（`t` 是 ksud 认的查询参数，落到 cookie）。
 
 ### 5.2 WebView 配置
 
