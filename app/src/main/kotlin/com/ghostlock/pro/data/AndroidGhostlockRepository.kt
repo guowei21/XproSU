@@ -46,7 +46,7 @@ class AndroidGhostlockRepository(
         const val WEBUI_URL_FILE = "webui.url"
         /** 根脚本留下的结果说明，用来解释"为什么没有会话"。 */
         const val WEBUI_STATUS_FILE = "webui.status"
-        /** 引擎退出后等脚本落地址的上限：脚本要先带起 ksud daemon（su/策略就绪），再起 webui。 */
+        /** 引擎退出后等脚本落地址的上限：late-load 的 stage 脚本要先在 ksu 域里带起 webui。 */
         const val WEBUI_WAIT_MS = 20_000L
 
         const val KEY_TCP_ROUTE = "tcp_route"
