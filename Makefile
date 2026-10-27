@@ -15,10 +15,7 @@ endif
 
 SRCS := \
   src/core/main.c \
-  src/core/offsets_bin.c \
-  src/core/chacha20.c \
-  src/core/poly1305.c \
-  src/core/selftest.c \
+  src/core/offsets_json.c \
   src/core/util.c \
   src/core/fops.c
 

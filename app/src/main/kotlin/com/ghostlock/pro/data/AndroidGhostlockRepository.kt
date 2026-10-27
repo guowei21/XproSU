@@ -2,12 +2,11 @@ package com.ghostlock.pro.data
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.system.Os
-import com.ghostlock.pro.BuildConfig
 import com.ghostlock.pro.domain.model.CpuPair
 import com.ghostlock.pro.domain.model.KernelSnapshot
-import com.ghostlock.pro.domain.model.OffsetImportResult
 import com.ghostlock.pro.domain.model.SupportedKernels
 import com.ghostlock.pro.domain.repository.GhostlockRepository
 import kotlinx.coroutines.CancellationException
@@ -21,34 +20,28 @@ import java.nio.charset.StandardCharsets
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import java.util.zip.ZipFile
 
 /**
  * Android implementation of the domain repository. All platform I/O lives here.
  *
- * The three licence values are injected as providers rather than reached for
- * directly, so this layer stays independent of the licence package: the engine
- * needs them, but it does not need to know where they came from.
+ * 偏移表随 APK 分发：`assets/offsets.enc` 由 [LocalOffsets] 在运行前解开，写成
+ * 引擎认识的 `offsets.json`。没有卡密、没有会话密钥、没有网络请求。
  */
 class AndroidGhostlockRepository(
     context: Context,
-    /** 32-byte per-device payload key `Kd`; null while the device is not activated. */
-    private val payloadKey: () -> ByteArray?,
-    /** This handset's 32-byte fingerprint, hex. */
-    private val deviceFpHex: () -> String,
-    /** First 16 bytes of SHA-256(card key), hex. The engine checks it against the container. */
-    private val cardTagHex: () -> String?,
 ) : GhostlockRepository {
     private companion object {
-        const val OffsetsFileName = "offsets.glt"
+        /** 引擎从 `$GHOSTLOCK_HOME/offsets.json` 导入偏移表。 */
+        const val OffsetsFileName = "offsets.json"
+        /** AES-256-GCM 密封的同一张表，见 tools/pack_offsets_local.py。 */
+        const val OffsetsAsset = "offsets.enc"
+        /** 各家管理器把 ksud 本体放在 `lib/<abi>/` 下，名字一直是这个。 */
+        const val KsudLibrary = "libksud.so"
+        /** 复制出来的临时文件名；引擎脚本按 `$HOME_DIR/ksud` 找它。 */
+        const val KsudName = "ksud"
         const val KsuLogName = ".ghostlock_ksu.log"
 
-        // Stage-2 container: 64-byte header, AEAD payload, no fixed key anywhere.
-        // See docs/stage2-protocol.md section 5.
-        const val GltVersion = 2
-        const val GltFlagAead = 0x02
-        const val GltHeaderSize = 64
-        const val GltMaxSize = 1 shl 20
-        val GltMagic = byteArrayOf(0x47, 0x4C, 0x54, 0x32) // "GLT2"
         const val KEY_TCP_ROUTE = "tcp_route"
     }
 
@@ -76,7 +69,7 @@ class AndroidGhostlockRepository(
         selectedPair = pair
     }
 
-    override fun tcpRouteEnabled(): Boolean = prefs.getBoolean(KEY_TCP_ROUTE, true)
+    override fun tcpRouteEnabled(): Boolean = prefs.getBoolean(KEY_TCP_ROUTE, false)
 
     override fun setTcpRouteEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_TCP_ROUTE, enabled).apply()
@@ -97,157 +90,45 @@ class AndroidGhostlockRepository(
 
 
     /**
-     * Make sure `<files>/offsets.glt` holds a usable container, releasing the
-     * packaged one out of the APK when it does not.
+     * 把随包的偏移表解到 `<files>/offsets.json`。
      *
-     * The packaged container is the authoritative copy -- there is no install
-     * step, the engine simply decrypts whatever lands here.  A cached file is
-     * reused only while its header still checks out, so a truncated or foreign
-     * file cannot wedge the run path: it is replaced on the next attempt.
-     *
-     * The app never parses the payload.  It used to write a plaintext
-     * offsets.json here, so the whole table sat in the app's private directory
-     * in a form anyone with a file browser could read and forward
-     * (ENCRYPTION-PLAN.md section 1, leaks 2 and 7).  The container is opaque:
-     * the copy is useless without the engine's decode step.
+     * 每次运行前都重写一份：解出来的表只有 5 KB，解密成本远低于「缓存被截断后
+     * 引擎静默退回内建表」的风险。解不开就直接返回 false，由调用方中止本次运行——
+     * 读到半张表比没有表更危险。
      */
-    /**
-     * The container now arrives from the licence server, not from `assets/`.
-     *
-     * Stage 1 shipped a copy of the table inside the APK; stage 2 ships nothing,
-     * so this only validates whatever the activation flow already wrote.  A
-     * missing or malformed file is a hard stop: the engine has no fallback table
-     * and must not grow one.
-     */
-    private fun ensureOffsetsBlob(): Boolean = hasValidBlobHeader(offsetsFile)
-
-    /**
-     * Header-only check: does this file look like a container for *this* card?
-     *
-     * The app cannot verify the payload -- it holds no key -- and does not need
-     * to: the engine re-checks the whole table against its gate set before it
-     * uses a single address.  What it can do cheaply is refuse a container that
-     * belongs to another device or another card, so the failure surfaces here
-     * rather than as a decryption error.
-     */
-    private fun hasValidBlobHeader(file: File): Boolean {
-        if (file.length() < GltHeaderSize) return false
-        val head = try {
-            file.inputStream().use { it.readBytes() }
-        } catch (_: IOException) {
-            return false
-        }
-        return validateBlob(head) is OffsetImportResult.Imported
-    }
-
-    /** Structural check of a container header; no key involved. */
-    private fun validateBlob(bytes: ByteArray): OffsetImportResult {
-        if (bytes.size < GltHeaderSize) {
-            return OffsetImportResult.Failed("payload is too short")
-        }
-        if (!bytes.copyOfRange(0, 4).contentEquals(GltMagic)) {
-            return OffsetImportResult.Failed("payload has a foreign magic")
-        }
-        if (bytes[4].toInt() != GltVersion) {
-            return OffsetImportResult.Failed("unsupported payload version ${bytes[4]}")
-        }
-        if (bytes[5].toInt() and GltFlagAead == 0) {
-            return OffsetImportResult.Failed("payload is not sealed")
-        }
-        if (bytes.size > GltMaxSize) {
-            return OffsetImportResult.Failed("payload is too large")
-        }
-
-        // fail-closed：长度不对或 hex 非法都必须直接拒绝，不能把校验跳过。
-        val fpBytes = decodeHex(deviceFpHex())
-            ?: return OffsetImportResult.Failed("invalid device fingerprint")
-        if (fpBytes.size != 32) {
-            return OffsetImportResult.Failed("invalid device fingerprint length")
-        }
-        if (!bytes.copyOfRange(16, 48).contentEquals(fpBytes)) {
-            return OffsetImportResult.Failed("payload is bound to another device")
-        }
-        val tag = decodeHex(cardTagHex() ?: return OffsetImportResult.Failed("missing card key"))
-            ?: return OffsetImportResult.Failed("invalid card key digest")
-        if (tag.size != 16) {
-            return OffsetImportResult.Failed("invalid card key digest length")
-        }
-        if (!bytes.copyOfRange(48, 64).contentEquals(tag)) {
-            return OffsetImportResult.Failed("payload is bound to another card key")
-        }
-        return OffsetImportResult.Imported
-    }
-
-    private fun decodeHex(hex: String): ByteArray? {
-        if (hex.length % 2 != 0) return null
-        val out = ByteArray(hex.length / 2)
-        for (i in out.indices) {
-            val hi = Character.digit(hex[i * 2], 16)
-            val lo = Character.digit(hex[i * 2 + 1], 16)
-            if (hi < 0 || lo < 0) return null
-            out[i] = ((hi shl 4) or lo).toByte()
-        }
-        return out
-    }
-
-    override suspend fun importOffsets(bytes: ByteArray): OffsetImportResult = withContext(Dispatchers.IO) {
-        val result = validateBlob(bytes)
-        if (result !is OffsetImportResult.Imported) return@withContext result
-        try {
-            offsetsFile.writeBytes(bytes)
-            result
-        } catch (error: CancellationException) {
-            throw error
+    private fun ensureLocalOffsets(onLog: (String) -> Unit): Boolean {
+        return try {
+            val sealed = appContext.assets.open(OffsetsAsset).use { it.readBytes() }
+            offsetsFile.writeBytes(LocalOffsets.decrypt(sealed))
+            true
         } catch (error: Exception) {
-            OffsetImportResult.Failed(error.message ?: "cannot write offsets package")
+            onLog("error: offsets decrypt failed: " + (error.message ?: error::class.simpleName))
+            false
         }
     }
 
 
     /**
-     * 会话模式：session 由 ViewModel 在运行前现场向服务端取得（Kd + 容器），
-     * 投喂给引擎后立即删除临时文件。传 null 时（Debug 旁路）走旧路径。
+     * 运行一次提权。
+     *
+     * 顺序是固定的：解开随包的偏移表 → 执行引擎。表解不开就不跑——引擎在找不到
+     * 导入表时会退回编译期内建的那一份，而那份未必与随包的版本一致，静默跑一张
+     * 旧表比直接失败更难查。
      */
     override suspend fun runExploit(
         pair: CpuPair,
         onLog: (String) -> Unit,
-        session: com.ghostlock.pro.license.SessionKey?,
     ): Int {
         val workDir = filesDir
         return try {
             val binary = File(appContext.applicationInfo.nativeLibraryDir, "libghostlock.so")
             require(binary.isFile) { "missing native binary: " + binary.absolutePath }
-            var sessionKd: ByteArray? = null
-            if (session != null) {
-                offsetsFile.writeBytes(session.blob)
-                sessionKd = session.kd
-            } else {
-                val kd0 = payloadKey()
-                if (kd0 == null) {
-                    if (BuildConfig.DEBUG) onLog("error: no license")
-                    return 1
-                }
-                sessionKd = kd0
-                if (!ensureOffsetsBlob()) {
-                    if (BuildConfig.DEBUG) onLog("error: missing activation payload (" + OffsetsFileName + ")")
-                    return 1
-                }
-            }
-            val kd = sessionKd!!
-            try {
-                return runExploitInner(pair, onLog, kd, workDir, binary)
-            } finally {
-                if (session != null) {
-                    // 容器与密钥都是一次性材料：用完立刻从磁盘与内存清掉。
-                    runCatching { offsetsFile.delete() }
-                    kd.fill(0)
-                    session.kd.fill(0)
-                }
-            }
+            if (!ensureLocalOffsets(onLog)) return 1
+            runExploitInner(pair, onLog, workDir, binary)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            if (BuildConfig.DEBUG) onLog("error: " + (error::class.simpleName ?: "?") + ": " + error.message)
+            onLog("error: " + (error::class.simpleName ?: "?") + ": " + error.message)
             1
         }
     }
@@ -255,59 +136,51 @@ class AndroidGhostlockRepository(
     private suspend fun runExploitInner(
         pair: CpuPair,
         onLog: (String) -> Unit,
-        kd: ByteArray,
         workDir: File,
         binary: File,
     ): Int {
-        val keyHex = kd.joinToString("") { "%02x".format(it) }
-            if (prepareKsud(workDir, onLog) != null) onLog("ksud ready") else onLog("warning: ksud not found")
-            // the root script creates its log as root, so one name per run
-            // keeps the last run's lines out of this run's log
-            val ksuLog = File(workDir, "$KsuLogName.${System.currentTimeMillis()}")
-            val nativeLog = File(workDir, ".ghostlock_native.log")
-            nativeLog.writeText("")
-            val ksuOffset = AtomicLong()
-            val nativeOffset = AtomicLong()
-            // tag root-script lines so they cannot be read as the native stages'
-            val ksuSink: (String) -> Unit = { onLog("[ksu] $it") }
-            val tailer = Thread {
-                try {
-                    while (!Thread.currentThread().isInterrupted) {
-                        tailKsuLog(nativeLog, nativeOffset, onLog)
-                        tailKsuLog(ksuLog, ksuOffset, ksuSink)
-                        Thread.sleep(200)
-                    }
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
+        // 双键的第二半：容器里的条目可以按 build 串（uname -v）钉住某个内核构建。
+        // 这里把本机值打进日志——失败时直接抄这一行回来加条目，不用 adb。
+        onLog("build: " + Os.uname().version)
+        if (prepareKsud(workDir, onLog) != null) onLog("ksud ready") else onLog("warning: ksud not found")
+        // the root script creates its log as root, so one name per run
+        // keeps the last run's lines out of this run's log
+        val ksuLog = File(workDir, "$KsuLogName.${System.currentTimeMillis()}")
+        val nativeLog = File(workDir, ".ghostlock_native.log")
+        nativeLog.writeText("")
+        val ksuOffset = AtomicLong()
+        val nativeOffset = AtomicLong()
+        // tag root-script lines so they cannot be read as the native stages'
+        val ksuSink: (String) -> Unit = { onLog("[ksu] $it") }
+        val tailer = Thread {
+            try {
+                while (!Thread.currentThread().isInterrupted) {
+                    tailKsuLog(nativeLog, nativeOffset, onLog)
+                    tailKsuLog(ksuLog, ksuOffset, ksuSink)
+                    Thread.sleep(200)
                 }
-            }.apply {
-                name = "ksu-log-tailer"
-                isDaemon = true
-                start()
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
             }
-            val command = ProcessBuilder(binary.absolutePath)
-                .directory(workDir)
-                .redirectErrorStream(true)
-                .redirectOutput(nativeLog)
-                .apply {
-                    environment()["GHOSTLOCK_HOME"] = workDir.absolutePath
-                    environment()["TMPDIR"] = workDir.absolutePath
-                    environment()["HOME"] = workDir.absolutePath
-                    environment()["GHOSTLOCK_KSU_LOG"] = ksuLog.absolutePath
-                    environment()["GHOSTLOCK_CORE"] = pair.primary.toString()
-                    environment()["GHOSTLOCK_CONSUMER_CORE"] = pair.consumer.toString()
-                    environment()["GHOSTLOCK_ROUTE"] = if (tcpRouteEnabled()) "tcp" else "mcast"
-                    // Stage 2: the container is sealed with a key that only this
-                    // handset's licence can produce, so the engine needs both the
-                    // key and this device's fingerprint to open it.
-                    environment()["GHOSTLOCK_KEY"] = keyHex
-                    environment()["GHOSTLOCK_DEVICE_FP"] = deviceFpHex()
-                    // The card binding: the engine refuses the container unless this
-                    // matches the AAD-covered header, so a build with the login
-                    // screen patched out still cannot decrypt anything.
-                    cardTagHex()?.let { environment()["GHOSTLOCK_CARD"] = it }
-                    if (safeModeEnabled) environment()["GHOSTLOCK_DISABLE_MODULES"] = "1"
-                }
+        }.apply {
+            name = "ksu-log-tailer"
+            isDaemon = true
+            start()
+        }
+        val command = ProcessBuilder(binary.absolutePath)
+            .directory(workDir)
+            .redirectErrorStream(true)
+            .redirectOutput(nativeLog)
+            .apply {
+                environment()["GHOSTLOCK_HOME"] = workDir.absolutePath
+                environment()["TMPDIR"] = workDir.absolutePath
+                environment()["HOME"] = workDir.absolutePath
+                environment()["GHOSTLOCK_KSU_LOG"] = ksuLog.absolutePath
+                environment()["GHOSTLOCK_CORE"] = pair.primary.toString()
+                environment()["GHOSTLOCK_CONSUMER_CORE"] = pair.consumer.toString()
+                environment()["GHOSTLOCK_ROUTE"] = if (tcpRouteEnabled()) "tcp" else "mcast"
+                if (safeModeEnabled) environment()["GHOSTLOCK_DISABLE_MODULES"] = "1"
+            }
         return try {
             runProcess(command, onLog = {}, captureOutput = false)
         } finally {
@@ -332,9 +205,8 @@ class AndroidGhostlockRepository(
 
     private fun isKernelSupported(): Boolean {
         val version = System.getProperty("os.version", "").orEmpty()
-        // A packaged entry always counts: the engine validates it far more
-        // strictly than the app could, and reports the reason if it refuses.
-        // 会话模式下容器是临时文件（用完即删），不能用它判断内核是否支持。
+        // 只做粗筛：真正的判定在引擎里（内建表 / 导入表都要过同一套 gate）。
+        // 这里列的是本仓库验证过的 release，命中即视为“值得一试”。
         return version in SupportedKernels.UNAMES
     }
 
@@ -441,23 +313,81 @@ class AndroidGhostlockRepository(
     private fun firstValidProperty(vararg keys: String): String? =
         keys.asSequence().firstNotNullOfOrNull { validDeviceName(systemProperty(it)) }
 
+    /**
+     * 把已安装管理器里的 `libksud.so` 取出来，落到 `$HOME_DIR/ksud`。
+     *
+     * 不再按包名列表匹配：DikSU 的管理器可以在设备上改包名，每次安装都是随机的
+     * `com.xxxxx.yyyyy`，写死的包名注定找不到。这里改成枚举已安装应用，谁的
+     * `nativeLibraryDir` 里有 `libksud.so` 就用谁；lib 没被抽出来（`extractNativeLibs`
+     * 关闭）时直接从 APK 里读 `lib/<abi>/libksud.so`。
+     *
+     * KernelSU / ReSukiSU / KowSU / DikSU 以及它们的改名版走的是同一条路 —— 这些
+     * 管理器的 `libksud.so` 就是 ksud 本体，`late-load` 也由它提供。
+     */
     private fun prepareKsud(workDir: File, onLog: (String) -> Unit): File? {
-        val packages = listOf("me.weishu.kernelsu.pr", "me.weishu.kernelsu", "com.resukisu.resukisu", "com.kowx712.supermanager")
-        var installed = false
-        for (packageName in packages) {
-            val appInfo = runCatching { appContext.packageManager.getApplicationInfo(packageName, 0) }.getOrNull() ?: continue
-            installed = true
-            val source = File(appInfo.nativeLibraryDir, "libksud.so")
-            if (!source.isFile) continue
-            val output = File(workDir, "ksud")
+        val output = File(workDir, KsudName)
+        // 随包的那份优先：版本固定，不依赖设备上装了哪个管理器，也不需要联网。
+        // 它是 DikSU 的 ksud 本体（GPL-3.0，源码见 README），被 exec 调用而不是加载。
+        val bundled = readKsudLibrary(appContext.applicationInfo)
+        if (bundled != null) {
             runCatching {
-                source.inputStream().use { input -> output.outputStream().use { input.copyTo(it) } }
+                output.writeBytes(bundled)
                 runCatching { Os.chmod(output.absolutePath, 448) }
+                onLog("ksud source: bundled (${bundled.size} bytes)")
+                return output
+            }.onFailure { onLog("copy bundled ksud failed: ${it.message}") }
+        }
+        var sawManager = false
+        for (info in installedManagerCandidates()) {
+            val bytes = readKsudLibrary(info) ?: continue
+            sawManager = true
+            runCatching {
+                output.writeBytes(bytes)
+                runCatching { Os.chmod(output.absolutePath, 448) }
+                onLog("ksud source: ${info.packageName} (${bytes.size} bytes)")
                 return output
             }.onFailure { onLog("copy ksud failed: ${it.message}") }
         }
-        if (!installed) onLog("KernelSU/ReSukiSU/KowSU app not installed")
+        if (!sawManager) {
+            onLog("no kernel manager with libksud.so found (KernelSU / ReSukiSU / KowSU / DikSU)")
+        }
         return null
+    }
+
+    /**
+     * 所有可能带 ksud 的已安装应用。
+     *
+     * 顺序上优先名字里带 ksu/sukisu/diksu 的包，其余按安装顺序；改名的管理器
+     * 虽然匹配不到关键字，仍然会作为候选被检查。
+     */
+    private fun installedManagerCandidates(): List<ApplicationInfo> {
+        val all = runCatching {
+            appContext.packageManager.getInstalledApplications(0)
+        }.getOrDefault(emptyList())
+        return all.sortedByDescending { info ->
+            val name = info.packageName.lowercase(Locale.ROOT)
+            when {
+                name.contains("diksu") -> 3
+                name.contains("kernelsu") || name.contains("sukisu") -> 2
+                name.contains("ksu") -> 1
+                else -> 0
+            }
+        }
+    }
+
+    /** 读管理器的 `libksud.so`：优先已抽出的 native 目录，其次直接读 APK。 */
+    private fun readKsudLibrary(info: ApplicationInfo): ByteArray? {
+        val extracted = File(info.nativeLibraryDir, KsudLibrary)
+        if (extracted.isFile) {
+            return runCatching { extracted.readBytes() }.getOrNull()
+        }
+        val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: return null
+        return runCatching {
+            ZipFile(info.sourceDir).use { zip ->
+                val entry = zip.getEntry("lib/$abi/$KsudLibrary") ?: return@use null
+                zip.getInputStream(entry).use { it.readBytes() }
+            }
+        }.getOrNull()
     }
 
     private suspend fun runProcess(

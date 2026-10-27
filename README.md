@@ -1,13 +1,15 @@
-# XproSU 产品工程（收费分发基线）
+# XproSU 1.1（非商业 · 本地解密偏移 + DikSU WebUI）
 
-> **定位**：XproSU 1.1（`versionCode 98`）的**完整、可编译源码工程**，
-> 作为「加密 + 卡密鉴权」商业化改造的基线。
+> **定位**：XproSU 1.1 的完整源码工程，**非商业、不含任何授权/联网校验**：没有激活页、
+> 没有卡密、没有心跳、没有服务端。偏移表随 APK 分发、在设备上本地解密；提权之后的
+> 管理（超级用户 / 模块 / 文件 / 终端）全部由随包的 DikSU `ksud` 的 WebUI 提供。
 >
-> **上游基线**：`YuKongA/ghostlock-app` 提交 `50d2b72`（2026-09-12，`pselect: fix compact route on 6.1 (#127)`）。
-> 定位依据、比对方法与还原验证见 [`RECONSTRUCTION.md`](RECONSTRUCTION.md)。
+> **引擎**：原版 ghostlock（CVE-2026-43499 futex PI UAF 提权），`src/` 逐文件保留，
+> 只把偏移的来源换成随包加密资产。
 >
-> **商业化方案**：[`ENCRYPTION-PLAN.md`](ENCRYPTION-PLAN.md)。
-> **卡密授权接入**：[`server/gl-license/README.md`](server/gl-license/README.md)。
+> **上游基线**：`YuKongA/ghostlock-app` 提交 `50d2b72`（2026-09-12，
+> `pselect: fix compact route on 6.1 (#127)`）。源码还原依据见
+> [`RECONSTRUCTION.md`](RECONSTRUCTION.md)。
 
 ---
 
@@ -15,179 +17,201 @@
 
 | 路径 | 内容 |
 |---|---|
-| `app/` | Android 应用（Kotlin + Compose + Miuix，17 个 Kotlin 源文件） |
-| `src/` | native 引擎源码（20 文件）；偏移已移出源码，`src/kernels/offsets.h` 仅剩 struct 定义 |
-| `Makefile` / `build.gradle.kts` | C 引擎构建（gradle 的 `buildGhostlockNative` → `prepareGhostlockJniLibs`） |
-| `app/build.gradle.kts` | app 构建（授权服务地址注入、签名、ABI 裁剪） |
-| `buildSrc/` | 空壳（生成 `SupportedKernels.kt` 的任务已废弃，该文件改为手写） |
-| `server/gl-license/` | 自建授权服务端（纯 Python 标准库；卡密鉴权 + 按设备派生载荷） |
-| `docs/offsets-binary-format.md` | 偏移表二进制容器（`.glt`）格式与实测证据 |
-| `docs/private-deploy/` | 私有化适配与部署：逐符号偏移提取、内建表烘焙、可复现构建、重打包签名、真机核验 |
-| `docs/upstream-README.md`<br>`docs/upstream-README_ZH.md` | 上游 README 原文（42 条内核 + Rust 提取器说明，**对本工程已不适用**） |
-| `RECONSTRUCTION.md` | 源码还原说明 |
-| `ENCRYPTION-PLAN.md` | 加密与卡密鉴权方案 |
-| `dist/` | 交付 APK 归档 |
-
-**不在这里的东西**：PC 侧的偏移提取脚本与明文 `offsets/*.json` 留在私有化主工程
-（`ghostlock-57-124-145-project/`）。明文表按 `ENCRYPTION-PLAN.md` §1 泄漏点 8 属
-「分发即致命」，**不得进入交付物**。
+| `app/` | Android 应用（Kotlin + Compose + Miuix） |
+| `app/src/main/assets/offsets.enc` | **随包偏移容器**：AES-256-GCM 密封的 `offsets.json` |
+| `app/src/main/jniLibs/arm64-v8a/libksud.so` | DikSU v3.3.0-57 的 ksud（GPL-3.0，exec 调用，见 §4.1） |
+| `src/` | 原版 ghostlock 引擎（`main.c` / `fops.c` / `util.c` / `offsets_json.c`） |
+| `src/kernels/offsets.h` | `known_offsets[]` **刻意留空**：只按 release 匹配会误配，见 §2 |
+| `Makefile` | C 引擎构建（gradle 走 `buildGhostlockNative` → `prepareGhostlockJniLibs`） |
+| `tools/pack_offsets_local.py` | 把偏移 JSON 密封成 `assets/offsets.enc`（打包期工具） |
+| `docs/private-deploy/` | 私有化适配资料：逐符号偏移提取、可复现构建、重打包签名、真机核验 |
+| `server/gl-license/` | **历史遗留**：旧卡密授权服务（Python 标准库）。本版 App 不再调用它 |
+| `RECONSTRUCTION.md` / `ENCRYPTION-PLAN.md` | 源码还原说明 / 旧的加密方案记录（历史文档） |
 
 ---
 
-## 2. 支持的内核（3 条内建表）
+## 2. 支持的内核（容器里的 3 条）
 
 | release（`uname -r`） | 设备 |
 |---|---|
 | `6.1.57-android14-11-maybe-dirty` | vivo PD2324（早期固件） |
-| `6.1.124-android14-11-maybe-dirty` | vivo PD2324 / V2324A（MT6989，当前固件） |
-| `6.1.145-android14-11-maybe-dirty` | vivo iQOO V2339FA（Dimensity 9300+） |
+| `6.1.124-android14-11-maybe-dirty` | vivo PD2324 / V2324A（MT6989） |
+| `6.1.145-android14-11-maybe-dirty` | vivo V2324A / iQOO 同代（Dimensity 9300） |
 
-app **不再内置任何偏移数据**：`assets/` 里没有载荷，全部由授权服务端按设备下发。
+匹配是**双键**：`release` + `build`（`uname -v`）。`uname -r` 不是机型标识——同一个
+release 串可以出现在不同厂商的 vmlinux 上，符号地址并不保证一致，所以只按它命中
+就写内存属于「拿错表 → 写错地址」。
 
----
+- 容器条目带 `"build"` 字段 → 必须与本机 `uname -v` 完全相等，否则跳过该条。
+- 条目没有 `"build"` → 只按 release 匹配，并在日志里打一行 warning（新机型还没采到
+  build 串时的过渡态）。
+- 全部不匹配 → `E04`，日志打印本机 `release=` / `build=` 原文后退出。
+- 容器缺失/解不开 → `E02`。**不回退到 `known_offsets[]`**（弱键兜底，正是要避免的）。
 
-## 3. 授权（阶段②：卡密同时管「门」和「锁」）
-
-```
-主界面（MainActivity，唯一 LAUNCHER）授权卡片
-  └─ 卡密 + 本机指纹 + 本机公钥 ──► 自建授权服务 /api/session
-                                     ├─ 校验卡密状态（有效 / 绑定本机 / 未过期）
-                                     ├─ Kd  = HKDF-SHA256(master, salt=SHA-256(卡密), info=设备指纹)
-                                     ├─ blob = GLT2：ChaCha20-Poly1305(Kd, AAD=64B 头含卡密摘要)
-                                     └─ wrapped = ECIES(本机公钥, Kd)
-  ◄─ blob + wrapped
-  └─ TEE 内解出 Kd（仅内存持有）→ 注入引擎 → 运行结束立即擦除
-```
-
-- **单屏入口**：`MainActivity` 是唯一 LAUNCHER；未激活时授权卡片上的「激活卡密」
-  是唯一入口，不再有独立登录页。
-- **密钥随用随取、永不落盘**：每次启动与每次「立即获取 Root」前都向 `/api/session`
-  现场换取 `Kd`，服务端把它封进本次请求的公钥；`Kd` 只在内存中持有，投喂引擎后
-  立即擦除，临时容器文件随用随删。后台删卡/封卡后，下次请求即刻返回 `1001`。
-- **卡密同时参与偏移解密**：容器头里的 `card_tag = SHA-256(卡密)[:16]` 被 AEAD 认证，
-  引擎解密前会拿用户输入卡密的摘要与它比对。登录分支被 patch 掉也拿不出这个值，
-  容器照样解不开——「门」不再是唯一防线。
-- **两把钥匙缺一不可**：`Kd` 通过 HKDF 的 salt 与卡密绑定；换成另一张卡的 `Kd`
-  在认证阶段失败，伪造绑定值在比对阶段失败（实测 5 组负向用例全部拒绝）。
-- **一机一码**：本机指纹取 Widevine `MediaDrm.PROPERTY_DEVICE_UNIQUE_ID`（32 字节、
-  硬件级，恢复出厂不变）；**没有退化方案** —— 取不到就直接拒绝运行。容器头的
-  `device_fp` 被 AEAD 认证，引擎再明文比对一次，拷贝到别的设备直接拒绝。
-- **Release fail-closed**：未配置授权服务地址时激活明确报错，不静默放行；
-  只有 `BuildConfig.DEBUG && 未配置服务` 才放行，便于本地调试。
-- **运行必须在线**：没有 `Kd` 就解不开容器，因此 `/api/session` 失败即 fail-closed；
-  心跳（`/api/heartbeat`）在传输失败时按本地到期时间判定，避免网络抖动误伤。
-- **日志分级**：Debug 显示明文运行日志；Release 只显示百分比 + 阶段名，
-  R8 + 资源收缩会把日志字符串一并从 APK 删除。
-- **设备日志（24h）**：App 每 8 秒把运行日志批次经 `token` 上传到 `/api/log`，
-  服务端按 `card_hash + device_fp` 归档；后台每张卡密都有「日志」入口，只保留
-  最近 24 小时，封卡后上传立即被拒。App 侧同时逐行落盘（上限 512 KiB），
-  跑挂/重启后可以在「维护」卡片点「立即上传」补交。
-- **W1 路由可切换**：默认 socket(`tcp`)，关闭后走 `mcast`；引擎启动打印
-  `route=…`，每条路由入口打印 `xxx route start`。路由 6 秒无进展时看门狗以
-  退出码 3 结束进程（App 提示“路由超时”），不再把整机卡死。
-
-完整协议见 [`docs/stage2-protocol.md`](docs/stage2-protocol.md)；
-**构建与部署步骤见 [`docs/build-and-deploy.md`](docs/build-and-deploy.md)**；
-**加固清单与 A/B 要求见 [`docs/hardening.md`](docs/hardening.md)**。
+日志里的 `build: …` 那一行就是本机 `uname -v`；换机型/换固件时把它抄进 JSON、重新
+打包即可（§3 末尾）。
 
 ---
 
-## 4. 构建
+## 3. 偏移数据怎么走（本地解密）
 
-前置：JDK 21、Android SDK（本机无 `make`，故跳过 native 编译）。
+```
+assets/offsets.enc            AES-256-GCM(json, aad="XSO1")
+        │                     密钥 = SHA-256("XproSU/local-offsets/v1")
+        ▼  LocalOffsets.decrypt()             （运行时，设备本地）
+$filesDir/offsets.json        引擎的导入格式（数组，每项一个 release）
+        ▼  load_offsets_json()
+active_offsets               release + build 双键命中的那一条
+        ▼
+W1 → vr.ko → W2 → W3 → root
+```
+
+- **没有服务端**：密钥推导在 App 里，所以这是**混淆**而不是保密 —— 拿到 APK 的人
+  可以复现这张表。要「APK 里拿不到表」就必须有服务端持有密钥，而这正是本版去掉的东西。
+- **每次运行前重写**：解出来的表只有 5 KB，重写成本远低于「缓存被截断后引擎找不到表」
+  的风险。
+- **一个容器可以装多台设备**：新增机型只加一条 JSON（`release` + `build` + 偏移），
+  重新打包，不改 C 代码、不重编引擎。
+- **`known_offsets[]` 刻意留空**：它只按 release 匹配，正是误配的来源；容器失败就
+  `E02` 退出，不猜。
+
+重新生成资产（改过偏移 JSON 之后）：
+
+```powershell
+python tools\pack_offsets_local.py app\src\main\assets\offsets.enc `
+    docs\private-deploy\offsets\offsets-57+124+145-combined.json
+```
+
+给某条 entry 钉死内核构建（推荐，防止同 release 串的别的机器命中）：在该条目里加一行
+
+```json
+"build": "<日志里 build: 那一行的原文>"
+```
+
+然后重新打包。没有 `build` 字段的条目按 release 匹配，日志会打一行 warning。
+
+---
+
+## 4. App 行为
+
+- **无授权**：启动不弹激活框，不发 `/api/session`、不发心跳、前台不做在线核对；
+  运行按钮只取决于内核是否在支持列表里。
+- **日志常显**：Release 也显示完整运行日志与终端卡片；「维护 → 运行日志 →
+  复制到剪贴板」可以把落盘的那份取出来（每行 fsync，卡死重启后仍在）。
+- **只走回环**：`INTERNET` 权限仅为 WebView 打开 `127.0.0.1` 上的管理页面；App 自身
+  不发任何外部请求（network security config 只对回环地址放行明文）。
+- **W1 路由可切换**：默认 `mcast`（真机验证过的路线），打开「TCP 路由」走 socket。
+  两条路都会在日志里打印 `route=…` 和 `xxx route start`。
+- **无超时/看门狗**：引擎的 futex 竞速没有人为截止时间 —— 加超时会把本来能完成的
+  路线提前打断（103 的失败原因）。
+
+### 4.1 分工：APK 只负责提权，管理交给 ksud 的 WebUI
+
+```
+APK                                    设备                              浏览器 / WebView
+ ├─ assets/offsets.enc ──本地解密──▶ files/offsets.json
+ ├─ jniLibs/libksud.so ──复制──▶ files/ksud
+ └─ exec libghostlock.so ─────────▶ W1 → vr.ko → W2 → W3 → root
+                                     └─ ksud late-load（加载 kernelsu.ko）
+                                     └─ ksud webui --daemon --idle-timeout 0
+                                           └─ 127.0.0.1:<port> + token ──▶ 管理页面
+```
+
+提权只到「拿到 uid 0」为止；超级用户、模块、文件管理、终端这些日常管理全部由
+`ksud` 内建的 HTTP 服务提供，App 不实现也不接触这些逻辑。
+
+- **随包带 ksud**：`app/src/main/jniLibs/arm64-v8a/libksud.so` 是 DikSU `v3.3.0-57`
+  的 ksud 二进制（6.4 MB，内含 `android14-6.1_kernelsu.ko` 与 WebUI 前端）。App 启动
+  提权前把它复制成 `files/ksud`，不需要设备上预装任何管理器。
+- **不按包名找管理器**：DikSU 的管理器可以在设备上改成随机包名；只有在没带随包副本时
+  才回落到扫描已安装应用的 `libksud.so`（`extractNativeLibs=false` 时直接读 APK）。
+- **不传 `--package-name`**：`libksud.so` 里烤着它自己的管理器包名，late-load 末尾用它
+  `am start`；传一个猜的包名只会拉错。
+- **管理页面只对本机开放**：ksud 绑 `127.0.0.1`，令牌落在 `/data/adb/ksu/webui.token`
+  （0600 root）。root 脚本把它拼成 `http://127.0.0.1:<port>/?t=<token>` 写进
+  `files/webui.url`（0600，属主是本 App），App 的「管理」按钮直接用 WebView 打开。
+  这也是 `INTERNET` 权限唯一的用途，network security config 只对 `127.0.0.1` 放行明文。
+- **重启后失效**：`late-load` 是内存态，不刷 boot 就没有持久 root；每次要用管理页面
+  先跑一次「立即获取 Root 权限」。页面还活着的时候重复打开没问题（端口与令牌会复用）。
+
+DikSU 的适配点：
+
+| 差异 | 处理 |
+|---|---|
+| 管理器包名可在设备上随机化（`com.xxxxx.yyyyy`） | 不按包名匹配：优先用随包的 `libksud.so`，其次扫描全部已安装应用 |
+| `libksud.so` 里烤着它自己的管理器包名 | **不传** `--package-name` |
+| 内核模块仍是 `kernelsu.ko`，路径仍是 `/data/adb/ksu` | 脚本里的 `grep kernelsu /proc/modules`、模块目录逻辑不用改 |
+| 官方 ko 矩阵包含 `android14-6.1` | 本机 KMI 正好命中；换成别的内核要换对应 KMI 的 ksud |
+| WebUI 需要令牌 | root 脚本读完 `webui.port` / `webui.token` 后写进 App 私有目录 |
+
+> **许可**：`libksud.so` 来自 [wuhudiao/DikSU](https://github.com/wuhudiao/DikSU)
+> （GPL-3.0），以独立可执行程序的形式随包分发、被 `exec` 调用，未与 App 代码链接；
+> 对应源码见该仓库 `userspace/ksud/`。App 自身仍是 Apache-2.0。若要二次分发，
+> 请一并保留 DikSU 的 GPL-3.0 许可与源码出处。
+
+---
+
+## 5. 构建
+
+前置：JDK 21、Android SDK、NDK（或云端 Actions 自带的 ONDK）。
 
 ```properties
 # local.properties（不入库）
 sdk.dir=<Android SDK>
-LICENSE_BASE_URL=<自建授权服务对外地址>
+KEYSTORE_PATH=<release keystore>
+KEYSTORE_PASS=<...>
+KEY_ALIAS=<...>
+KEY_PASSWORD=<...>
 ```
-
-> 服务端凭据（`master_key` 等）**不在 App 里**，写在服务端 `config.json`。
-> 完整步骤（服务端部署、引擎构建、Release 签名、联调清单、排错）见
-> [`docs/build-and-deploy.md`](docs/build-and-deploy.md)。
 
 ```powershell
 $env:JAVA_HOME    = '<JDK>'
 $env:ANDROID_HOME = '<Android SDK>'
 
-.\gradlew.bat assembleDebug   -x :buildGhostlockNative --no-daemon
-.\gradlew.bat assembleRelease -x :buildGhostlockNative --no-daemon
+.\gradlew.bat assembleRelease --no-daemon
 ```
 
-产物：
+产物：`app/build/outputs/apk/release/XproSU-v1.1(200)-arm64-v8a-release.apk`
 
-```
-app/build/outputs/apk/debug/XproSU-v1.1(98)-arm64-v8a-debug.apk
-app/build/outputs/apk/release/XproSU-v1.1(98)-arm64-v8a-release.apk
-```
+没有正式 keystore 时 release **直接构建失败**，不会回退到 debug 签名 ——
+debug 证书是公开的，任何人都能签一个同名包覆盖安装并继承 `/data/data` 下的数据。
 
-`prepareGhostlockJniLibs` 依赖 `buildGhostlockNative`（即 `make ghostlock`），并把产物
-复制到 `app/src/main/jniLibs/arm64-v8a/libghostlock.so`。因此要产出**含引擎**的 APK，
-必须先具备 `make` + NDK；只有在做纯 Kotlin 调试（不需要引擎）时，才用
-`-x :buildGhostlockNative -x :prepareGhostlockJniLibs` 跳过原生编译。
-
-**不需要 Rust / cargo** —— OTA 与 boot.img 解析功能已整体移除（见 §5）。
-
-### 4.1 上游基线（`versionCode 93`）实测构建结果
-
-> 下表是改造初期基线版本的实测数据，用于证明构建链路可用。当前发布版本为
-> `versionCode 98`，APK 体积与 `.so` 哈希已随引擎更新而变化。
-
-| 项 | 值 |
-|---|---|
-| 包名 / 版本 | `com.ghostlock.pro` / `versionCode 93` / `versionName 1.1` |
-| 入口 Activity | `com.ghostlock.pro.ui.MainActivity` |
-| ABI | `arm64-v8a` |
-| Debug APK | 63,319,543 B |
-| Release APK | 2,564,725 B（R8 + 资源收缩，13 个 zip 条目） |
-| `lib/arm64-v8a/libghostlock.so` | 74,840 B，SHA-256 `ca80f11712869425ed37c091765e4ebc380a705864d8f6ac6ff1ebb15a64e9b0` |
-| `assets/offsets.glt` | 940 B（3 条表） |
-| `libextract.so` | **不存在** ✅ |
-| 明文偏移扫描（Release） | `task_seccomp` / `off_init_cred` / 偏移数值 = **0 命中** |
-| Release 日志字符串 | `console_title` / `action_clear` 已从资源表消失（Debug-only 路径被判死代码） |
-
-> **引擎指纹说明**：本目录 Makefile 编出的 `.so` 与私有化主工程 `dist/` 里的
-> `libghostlock-r15-s1-arm64.so` **不是同一个哈希** —— 差别只在链接方式
-> （Makefile 用 clang 驱动 vs `tools/lld_link.sh` 的手写 lld 命令）。
-> 已实测两者**功能等价**：152 个函数中 149 个指令序列完全相同，其余 3 个是 PLT 桩
-> （只有 GOT 地址不同），`.rodata` / `.data` 字节完全相同。
+云端：`.github/workflows/build.yml`，`main` 的 push 或手动 dispatch 均可。
 
 ---
 
-## 5. 与上游 `50d2b72` 的差异
+## 6. 与上游 `50d2b72` 的差异
 
-1. `app/build.gradle.kts` —— `versionCode` 固定为手工值（当前 `98`）
-   （原逻辑走 `git rev-list --count HEAD`，在无 `.git` 目录会回退成 `1` → 无法覆盖安装）
-2. `app/.../data/AndroidGhostlockRepository.kt` —— 固定 `GHOSTLOCK_ROUTE=mcast`（TCP 路线默认开启）
-3. `src/` —— 替换为本项目引擎（偏移表移入 `.glt` 容器；上游 56 文件 / 42 条表留档在
-   `_backups/ghostlock-product-20261010-171829/src.upstream-backup/`，**不参与构建**）
-4. **OTA / boot.img 解析功能整体移除**（gradle 任务 + 6 个 Kotlin 文件）
-5. **商业化改造**：包名 `com.ghostlock.app` → `com.ghostlock.pro`；删除偏移导入/导出入口；
-   UI 重构为 HyperOS/Miuix 卡片式；接入自建卡密授权（U验证 已移除）；Debug/Release 日志分级
-
-逐项依据与比对方法见 [`RECONSTRUCTION.md`](RECONSTRUCTION.md) §2。
-
----
-
-## 6. 红线
-
-1. **签名密钥必须在卖出第一个卡密前固定** —— 换签名可能改 DRM ID，全部已绑定卡密一次性失效，
-   而「一机一码不允许解绑」下不可恢复（`ENCRYPTION-PLAN.md` §8.1）。
-2. **明文偏移表绝不落盘、绝不进交付物** —— 一旦图省事写回文件，加密工作全部归零
-   （`ENCRYPTION-PLAN.md` §6.1）。
-3. **不要动已真机验证的引擎路径**，任何改动都要 A/B 对照 —— 本引擎时序敏感（futex 竞速），
-   加固或重排可能让它从「稳定成功」退化成「偶尔成功」。
-4. `src/kernels/offsets.h` 里 `task_cred` **必须显式给值** —— 缺键会回落到 6.6 的 `0x900`，
-   而该值恰等于 6.1 的 `task_seccomp`，会把 root cred 写进 seccomp 字段。
-5. 同一开机周期**不得二跑** —— race 失败会留下悬空 PI 节点。
+1. `app/build.gradle.kts` —— `versionCode` 固定为手工值（当前 `200`），
+   因为无 `.git` 目录构建时 `git rev-list --count HEAD` 会回退成 `1`。
+2. `app/.../data/AndroidGhostlockRepository.kt` —— 运行前解密 `assets/offsets.enc`；
+   路由由设置页控制（默认 `mcast`）。
+3. **授权层整体移除**：`license/` 包（卡密、指纹、GLT2 容器、心跳、日志上传）
+   已删除；`BuildConfig.LICENSE_BASE_URL`、network security config、`INTERNET`
+   权限一并去掉。
+4. **OTA / boot.img 解析**（上游更早版本的功能）不在本工程内。
+5. 包名 `com.ghostlock.app` → `com.ghostlock.pro`；UI 重构为 Miuix 卡片式。
 
 ---
 
-## 7. 上游参考
+## 7. 红线
+
+1. **签名密钥固定后再分发** —— 换签名要卸载重装，`/data/data` 里的日志与解出来的
+   表都会丢。
+2. **不要给引擎加人为超时** —— 这套竞速在慢机上需要的时间是不确定的，任何
+   deadline/看门狗都会把「本来能成功」变成「失败」（`docs/private-deploy/` 有对照记录）。
+3. **同一开机周期不要二跑** —— race 失败会留下悬空 PI 节点。
+4. `src/kernels/offsets.h` 里 `task_cred` **必须显式给值** —— 缺键会回落到 6.6 的
+   `0x900`，而它恰等于 6.1 的 `task_seccomp`，会把 root cred 写进 seccomp 字段。
+5. **改 `src/` 就做 A/B** —— 时序敏感，任何重排都要与已验证的引擎逐行比对。
+
+---
+
+## 8. 上游参考
 
 | 项 | 值 |
 |---|---|
 | 仓库 | `https://github.com/YuKongA/ghostlock-app` |
 | 基线提交 | `50d2b72`（2026-09-12） |
-| 为什么不用上游 `main` | `main` 已重构成 C++ 世代（`src/core/race/`、`route/`、`session/`），app 层只设 2 个环境变量、配置走 JSON profile —— **与本引擎接口不兼容** |
-| 本工程与引擎的契约 | `exec` 调用 + 6 个 `GHOSTLOCK_*` 环境变量 + `GHOSTLOCK_HOME/offsets.glt` |
+| 为什么不用上游 `main` | `main` 已重构成 C++ 世代（`src/core/race/`、`route/`、`session/`），app 层只设 2 个环境变量、配置走 JSON profile —— 与本引擎接口不兼容 |
+| 本工程与引擎的契约 | `exec` 调用 + `GHOSTLOCK_*` 环境变量 + `GHOSTLOCK_HOME/offsets.json` |

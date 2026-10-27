@@ -267,7 +267,8 @@ make ghostlock API=35
 - 产物自检（每次构建后）：
   - `unzip -l` 有 `lib/arm64-v8a/libghostlock.so`、`lib/arm64-v8a/libksud.so`、`assets/offsets.enc`
   - `.so` 含 `offsets imported from offsets.json`、`mcast route`、`webui --daemon`；不含 `GLT2`
-  - `tools/glt1_extract.py`（或用 `LocalOffsets` 同一算法）能把 `offsets.enc` 解回三条 release
+  - `python tools/verify_offsets_local.py app/src/main/assets/offsets.enc` 能解回三条 release，
+    且每条的 `symbols`/`struct_fields` 数量不变
   - dex 不含 `api/activate`、`License`
   - `apksigner verify --print-certs` 与上一版同证书
 

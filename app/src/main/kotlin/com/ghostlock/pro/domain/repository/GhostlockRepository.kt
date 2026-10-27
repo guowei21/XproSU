@@ -2,7 +2,6 @@ package com.ghostlock.pro.domain.repository
 
 import com.ghostlock.pro.domain.model.CpuPair
 import com.ghostlock.pro.domain.model.KernelSnapshot
-import com.ghostlock.pro.domain.model.OffsetImportResult
 
 interface GhostlockRepository {
     suspend fun snapshot(): KernelSnapshot
@@ -31,25 +30,14 @@ interface GhostlockRepository {
 
 
     /**
-     * Install an offsets container after checking its header.
-     *
-     * Not user-facing: the packaged container is released automatically, so no
-     * UI path calls this.  It is the seam stage 2 uses to write the per-device
-     * container it receives for this handset.
-     */
-    suspend fun importOffsets(bytes: ByteArray): OffsetImportResult
-
-    /**
      * 执行提权。
      *
-     * [session] 是**本次运行前**由 LicenseRepository 向服务端现场换来的解密材料
-     * （Kd + GLT2 容器，只在内存）。Release 路径必须传它：Kd 不落盘，引擎
-     * 也没有任何本地密钥可用。传 null 只用于 Debug 旁路。
+     * 偏移表由 AndroidGhostlockRepository 在运行前从 APK 资源解开，写成引擎认识的
+     * `offsets.json`；这里不传任何密钥，也没有会话材料。
      */
     suspend fun runExploit(
         pair: CpuPair,
         onLog: (String) -> Unit,
-        session: com.ghostlock.pro.license.SessionKey?,
     ): Int
 
     fun close()
