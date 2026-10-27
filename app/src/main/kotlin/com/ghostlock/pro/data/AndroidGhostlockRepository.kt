@@ -42,6 +42,13 @@ class AndroidGhostlockRepository(
         const val KsudName = "ksud"
         const val KsuLogName = ".ghostlock_ksu.log"
 
+        /** 根脚本写完的 WebUI 地址（含一次性令牌），0600，属主是本 App。 */
+        const val WEBUI_URL_FILE = "webui.url"
+        /** 根脚本留下的结果说明，用来解释"为什么没有会话"。 */
+        const val WEBUI_STATUS_FILE = "webui.status"
+        /** 引擎退出后等脚本落地址的上限：脚本此时还在跑 webui --daemon。 */
+        const val WEBUI_WAIT_MS = 8_000L
+
         const val KEY_TCP_ROUTE = "tcp_route"
     }
 
@@ -124,13 +131,40 @@ class AndroidGhostlockRepository(
             val binary = File(appContext.applicationInfo.nativeLibraryDir, "libghostlock.so")
             require(binary.isFile) { "missing native binary: " + binary.absolutePath }
             if (!ensureLocalOffsets(onLog)) return 1
-            runExploitInner(pair, onLog, workDir, binary)
+            // 新一次运行 = 新一次会话：上一次的地址与状态先作废，
+            // 不然页面会打开一个已经轮换过令牌的旧地址。
+            runCatching { File(workDir, WEBUI_URL_FILE).delete() }
+            runCatching { File(workDir, WEBUI_STATUS_FILE).delete() }
+            val code = runExploitInner(pair, onLog, workDir, binary)
+            if (code == 0) awaitWebUi(onLog)
+            code
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
             onLog("error: " + (error::class.simpleName ?: "?") + ": " + error.message)
             1
         }
+    }
+
+    /**
+     * 等根脚本把 WebUI 地址写出来（引擎退出后脚本还在跑，晚几十到几百毫秒）。
+     *
+     * 等不到就把脚本留下的 `webui.status` 打进日志——那里面写着是 ksud 没起
+     * 还是模块没加载，比"没有会话"这句提示有用得多。
+     */
+    private fun awaitWebUi(onLog: (String) -> Unit) {
+        val url = File(filesDir, WEBUI_URL_FILE)
+        val deadline = System.currentTimeMillis() + WEBUI_WAIT_MS
+        while (System.currentTimeMillis() < deadline) {
+            val text = runCatching { url.readText().trim() }.getOrNull()
+            if (text != null && text.startsWith("http://127.0.0.1:")) {
+                onLog("webui: ready")
+                return
+            }
+            Thread.sleep(200)
+        }
+        val status = runCatching { File(filesDir, WEBUI_STATUS_FILE).readText().trim() }.getOrNull()
+        onLog("webui: no session" + if (status.isNullOrEmpty()) " (no status file)" else " ($status)")
     }
 
     private suspend fun runExploitInner(
