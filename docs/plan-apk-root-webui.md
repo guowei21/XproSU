@@ -17,8 +17,9 @@
 
 1. 单 APK，装完就能提权，不依赖设备上预先安装任何管理器。
 2. 提权成功后，App 内一键进入管理页面（WebView），URL 与令牌只落在本 App 私有目录。
-3. **偏移表内建**：57/124/145 三张表编译进引擎（`known_offsets[]`），APK 里没有
-   `offsets.enc` / `offsets.json` 之类的资产，运行时不落盘、不联网。
+3. **偏移表内建**：57/124/145 三张表编译进引擎（`known_offsets[]`），按
+   `uname -r` + `uname -v` 双键匹配；APK 里没有 `offsets.enc` / `offsets.json`
+   之类的资产，运行时不落盘、不联网。键不匹配就拒绝，不猜。
 4. Release 构建可直接分发：日志常显、失败有明确出口。
 
 **非目标（本期不做）**
@@ -100,15 +101,44 @@
 
 ```
 src/kernels/offsets.h   known_offsets[]   ← 57 / 124 / 145 三条，编译期常量
-        │  按 uname -r 命中
+        │  按 uname -r + uname -v 双键命中
         ▼
 active_offsets（进程内只读，不落盘）
 ```
 
+**匹配键：`uname -r` 不够，必须加 `uname -v`。**
+
+`uname -r`（`6.1.145-android14-11-maybe-dirty`）是**内核版本串**，不是机型标识。
+同一串可以出现在不同厂商的内核构建上（同一 KMI、不同 vmlinux），符号地址并不保证一致；
+只按它命中就写内存，属于"拿错表 → 写到错误地址"的风险，且不会在编译期报任何错。
+
+因此表项结构加一个字段，匹配改成双键：
+
+```c
+struct kernel_offsets {
+  const char *uname_r;   /* 6.1.145-android14-11-maybe-dirty */
+  const char *uname_v;   /* "#1 SMP PREEMPT Tue Sep 9 12:34:56 CST 2025"，NULL = 通配 */
+  ...
+};
+```
+
+- `uname -v` 由 `uname()` 直接给出（`uts.version`），**不需要 root、不需要读内核内存**，
+  且包含构建时间/主机信息，天然区分同串的不同构建。
+- 两个键都相等才接受；任一不等 → `E04 unsupported kernel build`，打印
+  `release=` / `build=` 两侧原文，**不回退到"第一条"**。
+- 表里只放有证据的条目：当前只有 6.1.145（V2324A）。57 / 124 是别的设备/固件，
+  没有对应 `uname -v` 就不进表——放进来本身就是误配源。
+- 首次构建前先从目标机取一次 `uname -v`（`adb shell uname -v`）写进表；
+  在那之前该条目不允许留空通配（宁可报 E04，也不猜）。
+
+为什么不在运行时校验内核内存（比如查 `init_task->comm`）：W1 之前没有读原语，
+W1 之后已经在竞速窗口里，任何一个额外读取都可能破坏时序。构建串是唯一
+"零成本、无副作用、足够唯一"的判据。
+
 - **APK 里没有任何偏移资产**：没有 `offsets.enc`、没有 `offsets.json`，运行时也不写表。
   表就在 `libghostlock.so` 里，跟着引擎一起编译。
 - 引擎仍保留原版的 `<home>/offsets.json` 导入路径，但本版**不分发**该文件；
-  它只是排障时手动覆盖的口子，优先级高于内建表。
+  它只是排障时手动覆盖的口子，导入时同样要过双键校验。
 - 取舍说清楚：内建表可以被反汇编还原（原版 ghostlock 本来就这么发）。它换来的是
   "没有明文资产、没有解密步骤、没有服务端"，**不是**"表拿不到"。要"拿不到"就
   必须有服务端持有密钥，本版明确不做。
@@ -185,6 +215,8 @@ fi
 | `src/`（整树） | **替换** | 换成原版 ghostlock（`original-core` 分支）：`main.c`、`fops.c`、`util.c`、`offsets_json.c`、`offset.h`、`common.h`、`target.h`、`runtime_struct_offsets.h`、`kernelsnitch/*`、`kernels/offsets.h`（含 `known_offsets[]`）、`kernels/<release>/offsets.h` |
 | `src/core/offsets_bin.c` `chacha20.*` `poly1305.*` `selftest.*` | **删除** | GLT2 链路整体移除，App 不再有 `Kd` |
 | `Makefile` | 修改 | `SRCS` 只留 `main.c offsets_json.c util.c fops.c` |
+| `src/kernels/offsets.h` | 修改 | `kernel_offsets` 加 `const char *uname_v`；三条表项各自填目标机的构建串 |
+| `src/core/main.c` `select_offsets()` | 修改 | 匹配从 `strcmp(release)` 改为 `release + version` 双键；不匹配 `E04` 并打印两侧原文 |
 | `src/core/main.c` | 两处增量 | ① 根脚本 ksud 查找改通用（`/data/adb/ksud` + `find -name libksud.so`）；② 尾段加 WebUI 启动与 `webui.url` |
 
 ### 6.2 App
@@ -223,8 +255,9 @@ fi
 4. **ksud 只在 root 下运行**：脚本先校验 `id -u == 0`，否则 `exit 1`。
 5. **GPL 边界**：`libksud.so` 是独立可执行程序（exec，不链接），README 注明出处与 GPL-3.0；
    App 代码保持 Apache-2.0。
-6. **偏移不落盘**：表是编译期常量，运行时不写 `offsets.json`、不读外部表；
-   日志只打印命中的 release，不打印任何绝对地址。
+6. **偏移不落盘，且双键匹配**：表是编译期常量，运行时不写 `offsets.json`、不读外部表；
+   命中要求 `uname -r` 与 `uname -v` 同时相等，任一不等直接 `E04` 拒绝（不回退、不通配）；
+   日志只打印命中的 release/build，不打印任何绝对地址。
 7. **本地加固（非商业版的全部内容）**：Release 开 R8 + 资源收缩、`vcsInfo` 关闭、
    无明文日志字符串；`allowBackup=false`；没有多余的 exported 组件；
    偏移不出现在 dex（本来就在 .so）；签名固定后不换（换签名 = 用户必须卸载重装）。
@@ -258,7 +291,8 @@ make ghostlock API=35
 
 ```
 kernel: 6.1.145-android14-11-maybe-dirty
-offsets matched: 6.1.145-android14-11-maybe-dirty     ← 内建表命中
+build: #1 SMP PREEMPT …                               ← 双键的第二半
+offsets matched: 6.1.145-android14-11-maybe-dirty     ← 内建表命中（release + build）
 ksud source: bundled (6379944 bytes)
 W1: SELinux attempt 1/15 … mcast route won
 [+] KernelSU module loaded
@@ -273,6 +307,7 @@ W1: SELinux attempt 1/15 … mcast route won
 | 现象 | 定位 | 处理 |
 |---|---|---|
 | 无 `offsets matched` | 内建表里没有该 release | 补 `src/kernels/offsets.h` 的 `known_offsets[]` 后重编 |
+| `E04 unsupported kernel build` | release 对上了，但 `uname -v` 不同（换了固件或换了机型） | 把日志里的 `release=` / `build=` 原文发回来，加一条表项；**不要**把 `uname_v` 改成 NULL 通配 |
 | `no offsets for kernel` | 同上 | 同上；先确认 `uname -r` 与表里的字符串逐字一致 |
 | `ksud missing; cannot late-load` | 随包 lib 没解出 | 检查 `useLegacyPackaging`、`nativeLibraryDir` |
 | `Failed to get android14-6.1_kernelsu.ko` | ksud 没带该 KMI | 换 DikSU 版本或自编 ksud |
@@ -286,6 +321,7 @@ W1: SELinux attempt 1/15 … mcast route won
 | 风险 | 影响 | 对策 |
 |---|---|---|
 | ksud 版本锁死（v3.3.0-57） | 换内核/换 KMI 要换包 | 版本与 sha256 写进 README；升级时重跑 §8 自检 |
+| 固件 OTA 改了 `uname -v` | 老表会被双键拒绝（E04） | 预期行为：拒绝 > 误写。取新 `uname -v` 加表后重编 |
 | 内存 root，重启失效 | 用户预期落差 | 首次引导明确说明；管理页失效时提示"重新提权" |
 | WebView 兼容性 | 页面白屏 | 页面是标准前端；保留"用浏览器打开"兜底按钮 |
 | 体积 9 MB | 分发成本 | 接受；ksud 无法裁剪（含 ko 与 WebUI） |
@@ -300,12 +336,12 @@ W1: SELinux attempt 1/15 … mcast route won
 |---|---|---|---|
 | P0 | 分支与基线：`src/` 换原版、Makefile 收敛 | `make ghostlock` 通过 | 0.5 d |
 | P1 | 授权剥离：删 7 个 license 文件、ViewModel/UI/构建字段 | 编译通过、无 `License` 引用 | 0.5 d |
-| P2 | 提权落地：`prepareKsud`（随包优先）、内建表核对 | 本地 Kotlin 编译 + .so 字符串自检 | 0.5 d |
+| P2 | 提权落地：`prepareKsud`（随包优先）、内建表双键匹配 | 本地 Kotlin 编译 + .so 字符串自检 | 1 d |
 | P3 | WebUI：脚本尾段、`WebUiActivity`、manifest/网络配置 | 构建产物含 `webui --daemon` | 1 d |
 | P4 | UI 与文案：管理入口、首次引导、失败提示 | 中英文案齐全 | 1 d |
 | P5 | 真机回归：§9 全表 | 验收记录 | 1–2 d |
 
-合计 **4–5 人日**（内建表省掉解密与打包脚本，比加密资产方案少半天）。
+合计 **5 人日**（内建表省掉解密与打包脚本，双键匹配补回半天）。
 
 ---
 
