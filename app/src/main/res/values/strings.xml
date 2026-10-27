@@ -47,4 +47,13 @@
     <string name="webui_open">Open manager</string>
     <string name="webui_unavailable">No manager session yet. Run “Get Root Privilege” first.</string>
     <string name="webui_expired">The manager session expired. Run “Get Root Privilege” again to reopen it.</string>
+
+    <string name="global_log_title">Global log</string>
+    <string name="global_log_summary">Everything across runs: engine output, web console, failed API calls. Kept on this device.</string>
+    <string name="global_log_open">Open global log</string>
+    <string name="global_log_empty">Global log is empty</string>
+    <string name="global_log_copied">Log copied</string>
+    <string name="global_log_clear">Clear</string>
+    <string name="global_log_cleared">Log cleared</string>
+    <string name="log_refresh">Refresh</string>
 </resources>

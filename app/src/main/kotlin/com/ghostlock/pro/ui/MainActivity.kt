@@ -24,7 +24,7 @@ class MainActivity : ComponentActivity() {
         viewModelFactory {
             initializer {
                 val app = application as GhostlockApplication
-                GhostlockViewModel(app.createRepository(), app.deviceLog)
+                GhostlockViewModel(app.createRepository(), app.deviceLog, app.globalLog)
             }
         }
     }
@@ -37,6 +37,9 @@ class MainActivity : ComponentActivity() {
             GhostlockRoute(
                 viewModel = viewModel,
                 onEffect = ::handleEffect,
+                onOpenGlobalLog = {
+                    startActivity(Intent(this, LogActivity::class.java))
+                },
                 onOpenWebUi = {
                     startActivity(Intent(this, WebUiActivity::class.java))
                 },
@@ -86,6 +89,7 @@ class MainActivity : ComponentActivity() {
 private fun GhostlockRoute(
     viewModel: GhostlockViewModel,
     onEffect: (GhostlockEffect) -> Unit,
+    onOpenGlobalLog: () -> Unit,
     onOpenWebUi: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -100,6 +104,7 @@ private fun GhostlockRoute(
             override fun onCopyLogs() = viewModel.copyLogs()
             override fun onClearLogs() = viewModel.clearLogs()
             override fun onExportLogs() = viewModel.exportDiagnosticLogs()
+            override fun onOpenGlobalLog() = onOpenGlobalLog()
             override fun onOpenWebUi() = onOpenWebUi()
             override fun onSafeModeChanged(enabled: Boolean) = viewModel.toggleSafeMode(enabled)
             override fun onTcpRouteChanged(enabled: Boolean) = viewModel.toggleTcpRoute(enabled)

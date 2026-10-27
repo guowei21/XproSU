@@ -47,4 +47,13 @@
     <string name="webui_open">打开管理页面</string>
     <string name="webui_unavailable">还没有可用的管理会话，请先点「立即获取 Root 权限」。</string>
     <string name="webui_expired">管理会话已失效，请再点一次「立即获取 Root 权限」重新打开。</string>
+
+    <string name="global_log_title">全局日志</string>
+    <string name="global_log_summary">跨运行保留：引擎输出、网页控制台、失败的接口都记在这里，只存本机。</string>
+    <string name="global_log_open">打开全局日志</string>
+    <string name="global_log_empty">全局日志为空</string>
+    <string name="global_log_copied">日志已复制</string>
+    <string name="global_log_clear">清空</string>
+    <string name="global_log_cleared">日志已清空</string>
+    <string name="log_refresh">刷新</string>
 </resources>

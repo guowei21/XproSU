@@ -46,5 +46,10 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|fontScale"
             android:exported="false"
             android:windowSoftInputMode="adjustResize" />
+        <!-- 全局日志查看器：运行日志 + WebUI 控制台 + 失败的接口。 -->
+        <activity
+            android:name=".ui.LogActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false" />
     </application>
 </manifest>

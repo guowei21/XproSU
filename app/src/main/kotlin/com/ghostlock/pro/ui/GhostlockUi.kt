@@ -105,6 +105,7 @@ interface GhostlockActions {
     fun onCopyLogs()
     fun onClearLogs() = Unit
     fun onExportLogs() = Unit
+    fun onOpenGlobalLog() = Unit
     fun onOpenWebUi() = Unit
     fun onSafeModeChanged(enabled: Boolean)
     fun onTcpRouteChanged(enabled: Boolean) = Unit
@@ -205,6 +206,7 @@ private fun PortraitContent(
                 cpuPairIndex = state.cpuPairIndex,
                 onCpuPairSelected = actions::onCpuPairSelected,
                 onExportLogs = actions::onExportLogs,
+                onOpenGlobalLog = actions::onOpenGlobalLog,
                 onOpenWebUi = actions::onOpenWebUi,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -273,6 +275,7 @@ private fun LandscapeContent(
                 cpuPairIndex = state.cpuPairIndex,
                 onCpuPairSelected = actions::onCpuPairSelected,
                 onExportLogs = actions::onExportLogs,
+                onOpenGlobalLog = actions::onOpenGlobalLog,
                 onOpenWebUi = actions::onOpenWebUi,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -557,6 +560,7 @@ private fun MaintenanceCard(
     cpuPairIndex: Int,
     onCpuPairSelected: (Int) -> Unit,
     onExportLogs: () -> Unit,
+    onOpenGlobalLog: () -> Unit,
     onOpenWebUi: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -626,6 +630,41 @@ private fun MaintenanceCard(
                 TextButton(
                     text = stringResource(R.string.webui_open),
                     onClick = onOpenWebUi,
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f)),
+            )
+            // 全局日志：跨运行保留，含 WebUI 控制台与失败的接口，用来查"页面能开
+            // 但功能没有"这类问题。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.global_log_title),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MiuixTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = stringResource(R.string.global_log_summary),
+                    fontSize = 12.sp,
+                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+                TextButton(
+                    text = stringResource(R.string.global_log_open),
+                    onClick = onOpenGlobalLog,
                     colors = ButtonDefaults.textButtonColorsPrimary(),
                     modifier = Modifier
                         .fillMaxWidth()

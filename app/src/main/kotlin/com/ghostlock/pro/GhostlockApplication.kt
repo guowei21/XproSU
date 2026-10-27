@@ -3,6 +3,7 @@ package com.ghostlock.pro
 import android.app.Application
 import com.ghostlock.pro.data.AndroidGhostlockRepository
 import com.ghostlock.pro.data.DeviceLogStore
+import com.ghostlock.pro.data.GlobalLog
 import com.ghostlock.pro.domain.repository.GhostlockRepository
 
 /**
@@ -16,6 +17,9 @@ class GhostlockApplication : Application() {
 
     /** 本机日志落盘（跑到一半死机之后仍能取出来）。 */
     val deviceLog: DeviceLogStore by lazy { DeviceLogStore(this) }
+
+    /** 全局流水：运行日志 + WebUI 控制台 + 失败的接口，跨运行保留。 */
+    val globalLog: GlobalLog by lazy { GlobalLog.get(this) }
 
     fun createRepository(): GhostlockRepository = AndroidGhostlockRepository(this)
 }

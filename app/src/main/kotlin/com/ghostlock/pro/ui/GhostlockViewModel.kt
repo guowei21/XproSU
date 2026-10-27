@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.ghostlock.pro.BuildConfig
 import com.ghostlock.pro.R
 import com.ghostlock.pro.data.DeviceLogStore
+import com.ghostlock.pro.data.GlobalLog
 import com.ghostlock.pro.domain.model.KernelSnapshot
 import com.ghostlock.pro.domain.model.LogTone
 import com.ghostlock.pro.domain.repository.GhostlockRepository
@@ -38,6 +39,7 @@ sealed interface GhostlockEffect {
 class GhostlockViewModel(
     private val repository: GhostlockRepository,
     private val deviceLog: DeviceLogStore,
+    private val globalLog: GlobalLog,
 ) : ViewModel() {
     private val effectChannel = Channel<GhostlockEffect>(Channel.BUFFERED)
     private val mutableState = MutableStateFlow(
@@ -198,12 +200,13 @@ class GhostlockViewModel(
         }
         if (!logHeaderSent) {
             logHeaderSent = true
-            deviceLog.append(
-                "[device] ${Build.MODEL} / Android ${Build.VERSION.RELEASE} / " +
-                    "kernel ${state.value.kernelRelease} / app ${BuildConfig.VERSION_NAME}",
-            )
+            val header = "[device] ${Build.MODEL} / Android ${Build.VERSION.RELEASE} / " +
+                "kernel ${state.value.kernelRelease} / app ${BuildConfig.VERSION_NAME}"
+            deviceLog.append(header)
+            globalLog.append("app", header)
         }
         deviceLog.append(line)
+        globalLog.append("app", line)
     }
 
     private fun startProgressCreep() {
