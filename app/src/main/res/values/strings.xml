@@ -46,4 +46,5 @@
     <string name="webui_summary">Superuser, modules, files and terminal are served by ksud on 127.0.0.1 after a successful run.</string>
     <string name="webui_open">Open manager</string>
     <string name="webui_unavailable">No manager session yet. Run “Get Root Privilege” first.</string>
+    <string name="webui_expired">The manager session expired. Run “Get Root Privilege” again to reopen it.</string>
 </resources>

@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -14,6 +15,7 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import com.ghostlock.pro.R
+import java.io.ByteArrayInputStream
 import java.io.File
 
 /**
@@ -55,6 +57,34 @@ class WebUiActivity : ComponentActivity() {
                     // 页面里的外链（文档、源码）交给浏览器，免得在管理页面里丢掉上下文。
                     runCatching { startActivity(Intent(Intent.ACTION_VIEW, target)) }
                     return true
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView,
+                    request: WebResourceRequest,
+                    errorResponse: WebResourceResponse,
+                ) {
+                    // 令牌被轮换过（例如上一次会话在别处正常关闭了页面），这里只剩一个 403。
+                    if (request.isForMainFrame && errorResponse.statusCode == 403) {
+                        showMessage(getString(R.string.webui_expired))
+                    }
+                }
+
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: WebResourceRequest,
+                ): WebResourceResponse? {
+                    // 页面 pagehide 时会 beacon /api/close，ksud 收到就把令牌轮换掉 ——
+                    // 那会让这里存着的地址在下次打开时失效。令牌本来只落在本 App 的
+                    // 私有文件里，这个请求没有存在的必要，直接吞掉。
+                    if (request.url.path == "/api/close") {
+                        return WebResourceResponse(
+                            "application/json",
+                            "utf-8",
+                            ByteArrayInputStream("{\"code\":0}".toByteArray()),
+                        )
+                    }
+                    return null
                 }
             }
             loadUrl(url)

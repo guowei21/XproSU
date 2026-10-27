@@ -46,4 +46,5 @@
     <string name="webui_summary">提权成功后，超级用户、模块、文件、终端都由 ksud 在 127.0.0.1 上提供。</string>
     <string name="webui_open">打开管理页面</string>
     <string name="webui_unavailable">还没有可用的管理会话，请先点「立即获取 Root 权限」。</string>
+    <string name="webui_expired">管理会话已失效，请再点一次「立即获取 Root 权限」重新打开。</string>
 </resources>
