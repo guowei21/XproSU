@@ -2,7 +2,9 @@
 
 > 基线：`7fc9258`（`upstream-base`，我们动手前的 XproSU 代码）
 > 本分支：`apk-root-webui`
-> 对照：`main`（`c37d8ba`，已实现同一目标，但由多轮补丁堆出来；本分支是它的整理版）
+> 定位：**非商业版**。不做卡密、不做服务端、不做付费链路；
+> 只做两件事 —— 本地提权加固、偏移表内建（APK 里没有任何偏移资产）。
+> 对照：`main`（`c37d8ba`，同一目标的补丁堆版本，偏移走加密资产；本分支改为内建）
 
 ---
 
@@ -15,14 +17,16 @@
 
 1. 单 APK，装完就能提权，不依赖设备上预先安装任何管理器。
 2. 提权成功后，App 内一键进入管理页面（WebView），URL 与令牌只落在本 App 私有目录。
-3. 偏移表随包分发、运行时本地解密；不需要授权服务器、不需要联网。
+3. **偏移表内建**：57/124/145 三张表编译进引擎（`known_offsets[]`），APK 里没有
+   `offsets.enc` / `offsets.json` 之类的资产，运行时不落盘、不联网。
 4. Release 构建可直接分发：日志常显、失败有明确出口。
 
 **非目标（本期不做）**
 
+- 不做任何商业化：没有卡密、激活、心跳、授权服务器、日志上传。
 - 不做持久 root（刷 boot / 集成 lkm 到 boot.img）——`late-load` 是内存态，重启即失效。
 - 不合并 DikSU 的 Kotlin 管理器代码（避免 GPL 传染与 2–4 周 UI 合并）。
-- 不实现卡密/激活/心跳/日志上传。
+- 不做偏移资产/容器解密（改为内建，见 §4.2）。
 - 不做自动更新。
 
 ---
@@ -53,9 +57,8 @@
 │   └─ 维护：W1 路由(tcp/mcast) · 核心对 · 兼容模式 · 日志导出                     │
 │                                                                                 │
 │  RootController (Kotlin)                                                       │
-│   ├─ 解密 assets/offsets.enc  →  files/offsets.json                            │
 │   ├─ 复制 jniLibs/libksud.so   →  files/ksud                                   │
-│   └─ exec libghostlock.so（环境变量见 §4）                                      │
+│   └─ exec libghostlock.so（环境变量见 §4；偏移已内建，不传表）                   │
 │                                                                                 │
 │  WebUiActivity (WebView)  ←  files/webui.url（0600，属主=App）                  │
 └───────────────┬──────────────────────────────────────────────┬──────────────────┘
@@ -74,7 +77,7 @@
 
 | 角色 | 只负责 | 不负责 |
 |---|---|---|
-| App | 提权、解密偏移、拉起 ksud、打开页面 | 授权列表、模块安装、文件操作 |
+| App | 提权、拉起 ksud、打开页面 | 授权列表、模块安装、文件操作、偏移管理 |
 | 引擎 | futex 竞速、SELinux/cred/seccomp、调用 ksud | UI、持久化 |
 | ksud | 加载 `kernelsu.ko`、提供 WebUI 与全部管理 API | 提权 |
 
@@ -86,27 +89,30 @@
 
 | 变量 | 值 | 作用 |
 |---|---|---|
-| `GHOSTLOCK_HOME` | `filesDir` | 引擎读 `offsets.json`、写 `webui.url`、日志 |
+| `GHOSTLOCK_HOME` | `filesDir` | 引擎写 `webui.url`、日志（偏移已内建，不再读表） |
 | `TMPDIR` / `HOME` | 同上 | 临时文件 |
 | `GHOSTLOCK_KSU_LOG` | `filesDir/.ghostlock_ksu.log.<ts>` | 根脚本日志（App 侧 tail） |
 | `GHOSTLOCK_CORE` / `GHOSTLOCK_CONSUMER_CORE` | 用户选的核心对 | futex 竞速绑核 |
 | `GHOSTLOCK_ROUTE` | `mcast`（默认）/ `tcp` | W1 路线 |
 | `GHOSTLOCK_DISABLE_MODULES` | `1`（兼容模式） | late-load 前置禁用模块 |
 
-### 4.2 偏移
+### 4.2 偏移（内建）
 
 ```
-assets/offsets.enc   AES-256-GCM(json, aad="XSO1")
-   key = SHA-256("XproSU/local-offsets/v1")
-        │ LocalOffsets.decrypt()（设备本地）
+src/kernels/offsets.h   known_offsets[]   ← 57 / 124 / 145 三条，编译期常量
+        │  按 uname -r 命中
         ▼
-files/offsets.json   引擎导入格式（数组，每项一个 release）
-        ▼ try_external_offsets()
-命中 uname -r 的条目 → 缺失字段回落 known_offsets[]（57/124/145）
+active_offsets（进程内只读，不落盘）
 ```
 
-- 每次运行前重写（5 KB，成本可忽略），避免"缓存被截断后静默退回旧表"。
-- 解不开就中止本次运行并写日志，不猜测。
+- **APK 里没有任何偏移资产**：没有 `offsets.enc`、没有 `offsets.json`，运行时也不写表。
+  表就在 `libghostlock.so` 里，跟着引擎一起编译。
+- 引擎仍保留原版的 `<home>/offsets.json` 导入路径，但本版**不分发**该文件；
+  它只是排障时手动覆盖的口子，优先级高于内建表。
+- 取舍说清楚：内建表可以被反汇编还原（原版 ghostlock 本来就这么发）。它换来的是
+  "没有明文资产、没有解密步骤、没有服务端"，**不是**"表拿不到"。要"拿不到"就
+  必须有服务端持有密钥，本版明确不做。
+- 改表 = 改 `src/kernels/offsets.h` 后重新编译；没有打包脚本，也没有密钥。
 
 ### 4.3 根脚本尾段（新增，其余保持原版）
 
@@ -131,7 +137,6 @@ fi
 
 | 文件 | 位置 | 权限 | 何时写 | 何时删 |
 |---|---|---|---|---|
-| `offsets.json` | `filesDir` | 0600 | 每次运行前 | 不删（下次覆盖） |
 | `ksud` | `filesDir` | 0700 | 每次运行前 | 不删（版本随包） |
 | `webui.url` | `filesDir` | 0600 | 提权成功且 WebUI 起来 | 下次运行覆盖；重启后失效 |
 | `webui.token` / `webui.port` | `/data/adb/ksu` | 0600 root | ksud | ksud 管理 |
@@ -188,13 +193,11 @@ fi
 |---|---|---|
 | `license/LicenseRepository.kt` `LicenseClient.kt` `LicenseStore.kt` `CardKey.kt` `DeviceKey.kt` `GlBlob.kt` `DeviceFingerprint.kt` | **删除** | 授权层整体移除 |
 | `license/DeviceLogStore.kt` | 移动 | → `data/DeviceLogStore.kt`，只负责本机落盘 |
-| `data/LocalOffsets.kt` | 新增 | AES-GCM 解密 `offsets.enc` |
-| `data/AndroidGhostlockRepository.kt` | 重写约 40% | 去掉 `Kd`/GLT2/env 密钥；加 `ensureLocalOffsets()`、`prepareKsud()`（随包优先） |
+| `data/AndroidGhostlockRepository.kt` | 重写约 40% | 去掉 `Kd`/GLT2/env 密钥；加 `prepareKsud()`（随包优先）；不再解密或写入偏移表 |
 | `ui/GhostlockViewModel.kt` | 重写约 40% | 去掉激活/心跳/上传；日志常显；新增 `exportDiagnosticLogs()` |
 | `ui/GhostlockUi.kt` | 删改 | 删授权卡与激活对话框；`RunButton` 去掉 `isLicensed`；维护区加「打开管理页面」 |
 | `ui/WebUiActivity.kt` | 新增 | WebView 壳（§5.2） |
 | `GhostlockApplication.kt` `MainActivity.kt` | 简化 | 不再注入 `LicenseRepository` |
-| `assets/offsets.enc` | 新增 | 57/124/145 三张表，4,973 B |
 | `jniLibs/arm64-v8a/libksud.so` | 新增 | DikSU v3.3.0-57，6.38 MB，含 `android14-6.1_kernelsu.ko` 与 WebUI 前端 |
 | `res/values(-zh)/strings.xml` | 删改 | 删 license/activate 文案；加 webui 四条 |
 | `res/xml/network_security_config.xml` | 新增 | 只对 `127.0.0.1`/`localhost` 放行明文 |
@@ -205,9 +208,8 @@ fi
 
 | 路径 | 动作 | 说明 |
 |---|---|---|
-| `tools/pack_offsets_local.py` | 新增 | 改表后重新密封 `offsets.enc` |
 | `README.md` | 重写 | 目标、流程图、构建、契约、红线 |
-| `docs/private-deploy/` `server/gl-license/` | 保留 | 历史资料，App 不再引用；README 标注 |
+| `docs/private-deploy/` `server/gl-license/` | 保留 | 历史资料，App 不再引用；README 标注"非商业版不含授权链路" |
 
 ---
 
@@ -221,6 +223,11 @@ fi
 4. **ksud 只在 root 下运行**：脚本先校验 `id -u == 0`，否则 `exit 1`。
 5. **GPL 边界**：`libksud.so` 是独立可执行程序（exec，不链接），README 注明出处与 GPL-3.0；
    App 代码保持 Apache-2.0。
+6. **偏移不落盘**：表是编译期常量，运行时不写 `offsets.json`、不读外部表；
+   日志只打印命中的 release，不打印任何绝对地址。
+7. **本地加固（非商业版的全部内容）**：Release 开 R8 + 资源收缩、`vcsInfo` 关闭、
+   无明文日志字符串；`allowBackup=false`；没有多余的 exported 组件；
+   偏移不出现在 dex（本来就在 .so）；签名固定后不换（换签名 = 用户必须卸载重装）。
 
 ---
 
@@ -238,9 +245,9 @@ make ghostlock API=35
 - 版本号：本分支从 **200** 起手工递增（与 `main` 的 110 区分，避免覆盖安装歧义）。
 - CI：`.github/workflows/build.yml`；本分支手动 `gh workflow run build.yml --ref apk-root-webui`。
 - 产物自检（每次构建后）：
-  - `unzip -l` 有 `lib/arm64-v8a/libghostlock.so`、`lib/arm64-v8a/libksud.so`、`assets/offsets.enc`
-  - `.so` 含 `offsets matched`、`mcast route`、`webui --daemon`；不含 `GLT2`
-  - dex 不含 `api/activate`、`License`
+  - `unzip -l` 有 `lib/arm64-v8a/libghostlock.so`、`lib/arm64-v8a/libksud.so`；**没有** `assets/offsets.*`
+  - `.so` 含 `offsets matched`、`mcast route`、`webui --daemon`；不含 `GLT2`、`load_offsets_bin`
+  - dex 不含 `api/activate`、`License`、`XSO1`
   - `apksigner verify --print-certs` 与上一版同证书
 
 ---
@@ -251,7 +258,7 @@ make ghostlock API=35
 
 ```
 kernel: 6.1.145-android14-11-maybe-dirty
-offsets imported from offsets.json: 6.1.145-…      ← 本地解密生效
+offsets matched: 6.1.145-android14-11-maybe-dirty     ← 内建表命中
 ksud source: bundled (6379944 bytes)
 W1: SELinux attempt 1/15 … mcast route won
 [+] KernelSU module loaded
@@ -265,8 +272,8 @@ W1: SELinux attempt 1/15 … mcast route won
 
 | 现象 | 定位 | 处理 |
 |---|---|---|
-| 无 `offsets imported` | 解密或路径 | 看 `ksud source` 之前的日志；检查 `files/offsets.json` 是否生成 |
-| `no offsets for kernel` | 表里没有该 release | 补 `known_offsets[]` 或换 `offsets.enc` |
+| 无 `offsets matched` | 内建表里没有该 release | 补 `src/kernels/offsets.h` 的 `known_offsets[]` 后重编 |
+| `no offsets for kernel` | 同上 | 同上；先确认 `uname -r` 与表里的字符串逐字一致 |
 | `ksud missing; cannot late-load` | 随包 lib 没解出 | 检查 `useLegacyPackaging`、`nativeLibraryDir` |
 | `Failed to get android14-6.1_kernelsu.ko` | ksud 没带该 KMI | 换 DikSU 版本或自编 ksud |
 | 页面 403 | 令牌被轮换 | 重新提权（本期已拦截 `/api/close`） |
@@ -293,12 +300,12 @@ W1: SELinux attempt 1/15 … mcast route won
 |---|---|---|---|
 | P0 | 分支与基线：`src/` 换原版、Makefile 收敛 | `make ghostlock` 通过 | 0.5 d |
 | P1 | 授权剥离：删 7 个 license 文件、ViewModel/UI/构建字段 | 编译通过、无 `License` 引用 | 0.5 d |
-| P2 | 提权落地：`LocalOffsets`、`prepareKsud`、offsets.enc | 本地 Kotlin 编译 + .so 字符串自检 | 1 d |
+| P2 | 提权落地：`prepareKsud`（随包优先）、内建表核对 | 本地 Kotlin 编译 + .so 字符串自检 | 0.5 d |
 | P3 | WebUI：脚本尾段、`WebUiActivity`、manifest/网络配置 | 构建产物含 `webui --daemon` | 1 d |
 | P4 | UI 与文案：管理入口、首次引导、失败提示 | 中英文案齐全 | 1 d |
 | P5 | 真机回归：§9 全表 | 验收记录 | 1–2 d |
 
-合计 **5–6 人日**（不含真机往返等待）。
+合计 **4–5 人日**（内建表省掉解密与打包脚本，比加密资产方案少半天）。
 
 ---
 
@@ -308,11 +315,11 @@ W1: SELinux attempt 1/15 … mcast route won
 
 | 块 | 来源 |
 |---|---|
-| 原版引擎整树 | `original-core:src` |
-| `LocalOffsets` + `offsets.enc` + 打包脚本 | `main:app/.../data/LocalOffsets.kt`、`tools/pack_offsets_local.py` |
+| 原版引擎整树（含 `known_offsets[]`） | `original-core:src` |
 | `prepareKsud`（随包优先 + 通用扫描） | `main:app/.../data/AndroidGhostlockRepository.kt` |
 | WebUI 脚本尾段 | `main:src/core/main.c`（`webui --daemon` 段） |
 | `WebUiActivity` + 网络配置 + 文案 | `main:app/.../ui/WebUiActivity.kt` 等 |
 
-> 与 `main` 的唯一结构性差别：本分支从上游骨架重新组织，删掉 `main` 上残留的
-> 过渡代码（`OFFLINE_MODE` 常量、`Glt1Magic` 之类），并把版本号从 200 重新起算。
+> 与 `main` 的差别：本分支**不带** `LocalOffsets` / `offsets.enc` / `pack_offsets_local.py`，
+> 偏移回到 `known_offsets[]` 内建；同时删掉 `main` 上残留的过渡代码
+> （`OFFLINE_MODE`、`Glt1Magic` 之类），版本号从 200 重新起算。
