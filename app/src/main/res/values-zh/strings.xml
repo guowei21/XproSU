@@ -41,4 +41,13 @@
     <string name="diagnostics_log_action">复制到剪贴板</string>
     <string name="diagnostics_log_empty">本机暂无日志</string>
     <string name="diagnostics_log_copied">日志已复制</string>
+
+    <string name="manager_label">根管理器</string>
+    <string name="manager_summary_auto">自动（推荐）</string>
+    <string name="manager_choose">选择</string>
+    <string name="manager_picker_title">选择根管理器</string>
+    <string name="manager_picker_empty">未找到应用</string>
+    <string name="manager_no_ksud">未检测到 libksud.so，可能无法使用</string>
+    <string name="manager_show_all">显示全部应用</string>
+    <string name="manager_hide_all">仅显示兼容应用</string>
 </resources>

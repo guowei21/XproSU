@@ -1,5 +1,6 @@
 package com.ghostlock.pro.domain.repository
 
+import com.ghostlock.pro.data.ManagerScanner
 import com.ghostlock.pro.domain.model.CpuPair
 import com.ghostlock.pro.domain.model.KernelSnapshot
 
@@ -7,6 +8,15 @@ interface GhostlockRepository {
     suspend fun snapshot(): KernelSnapshot
 
     fun setSafeModeEnabled(enabled: Boolean)
+
+    /** 手动选择的管理器包名（提供 ksud）；null = 自动。 */
+    fun selectedManagerPackage(): String?
+
+    /** 手动指定管理器；传 null 恢复自动（内置优先级）。 */
+    fun setSelectedManagerPackage(pkg: String?)
+
+    /** 已安装的第三方应用，带 libksud.so 的排前面；用于选择器展示。 */
+    suspend fun installedManagers(): List<ManagerScanner.Candidate>
 
     /** 本机可用核心对，按最高频簇优先排序；用于 UI 下拉选择。 */
     fun availableCpuPairs(): List<CpuPair>

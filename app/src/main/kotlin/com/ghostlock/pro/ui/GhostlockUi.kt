@@ -35,6 +35,10 @@ import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ghostlock.pro.R
+import com.ghostlock.pro.data.ManagerScanner
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.CardDefaults
@@ -95,6 +100,11 @@ data class GhostlockUiState(
     val cpuPairIndex: Int = -1,
     /** 明文运行日志是否可见：公开版恒为 true。 */
     val logsVisible: Boolean = true,
+    /** 管理器候选；打开选择器时扫描填充。 */
+    val managerCandidates: List<ManagerScanner.Candidate> = emptyList(),
+    /** 手动选择的管理器包名；null = 自动（内置优先级）。 */
+    val selectedManagerPackage: String? = null,
+    val managerPickerVisible: Boolean = false,
 )
 
 data class GhostlockLogLine(val text: String, val color: Int)
@@ -108,6 +118,9 @@ interface GhostlockActions {
     fun onSafeModeChanged(enabled: Boolean)
     fun onTcpRouteChanged(enabled: Boolean) = Unit
     fun onCpuPairSelected(index: Int) = Unit
+    fun onOpenManagerPicker() = Unit
+    fun onCloseManagerPicker() = Unit
+    fun onManagerSelected(packageName: String?) = Unit
 }
 
 @Composable
@@ -153,6 +166,7 @@ internal fun GhostlockApp(
                 }
             }
             GhostlockExecutionSheet(state = state, actions = actions)
+            ManagerPickerSheet(state = state, actions = actions)
         }
     }
 }
@@ -203,6 +217,9 @@ private fun PortraitContent(
                 cpuPairLabels = state.cpuPairLabels,
                 cpuPairIndex = state.cpuPairIndex,
                 onCpuPairSelected = actions::onCpuPairSelected,
+                managerCandidates = state.managerCandidates,
+                selectedManagerPackage = state.selectedManagerPackage,
+                onOpenManagerPicker = actions::onOpenManagerPicker,
                 onExportLogs = actions::onExportLogs,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -270,6 +287,9 @@ private fun LandscapeContent(
                 cpuPairLabels = state.cpuPairLabels,
                 cpuPairIndex = state.cpuPairIndex,
                 onCpuPairSelected = actions::onCpuPairSelected,
+                managerCandidates = state.managerCandidates,
+                selectedManagerPackage = state.selectedManagerPackage,
+                onOpenManagerPicker = actions::onOpenManagerPicker,
                 onExportLogs = actions::onExportLogs,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -553,6 +573,9 @@ private fun MaintenanceCard(
     cpuPairLabels: List<String>,
     cpuPairIndex: Int,
     onCpuPairSelected: (Int) -> Unit,
+    managerCandidates: List<ManagerScanner.Candidate>,
+    selectedManagerPackage: String?,
+    onOpenManagerPicker: () -> Unit,
     onExportLogs: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -560,6 +583,19 @@ private fun MaintenanceCard(
         Column(
             modifier = Modifier.fillMaxWidth(),
         ) {
+            ManagerSelectorRow(
+                candidates = managerCandidates,
+                selectedPackage = selectedManagerPackage,
+                onOpen = onOpenManagerPicker,
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f)),
+            )
+
             SwitchPreference(
                 checked = tcpRouteEnabled,
                 onCheckedChange = onTcpRouteChanged,
@@ -680,6 +716,186 @@ private fun CpuPairSelector(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * 根管理器选择入口：显示当前选择（自动 / 应用名 / 包名），点「选择」打开候选列表。
+ *
+ * 任何带 libksud.so 的应用都能当管理器（与 dirtyfrag 的做法一致），内置列表只用于自动排序。
+ */
+@Composable
+private fun ManagerSelectorRow(
+    candidates: List<ManagerScanner.Candidate>,
+    selectedPackage: String?,
+    onOpen: () -> Unit,
+) {
+    val summary = selectedPackage?.let { pkg ->
+        candidates.firstOrNull { it.packageName == pkg }?.label ?: pkg
+    } ?: stringResource(R.string.manager_summary_auto)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.manager_label),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = MiuixTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = summary,
+                fontSize = 12.sp,
+                color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        TextButton(
+            text = stringResource(R.string.manager_choose),
+            onClick = onOpen,
+            colors = ButtonDefaults.textButtonColorsPrimary(),
+            modifier = Modifier.height(40.dp),
+        )
+    }
+}
+
+/**
+ * 根管理器选择器：首项固定「自动」，其余按兼容性排序；不兼容项默认折叠。
+ */
+@Composable
+private fun ManagerPickerSheet(
+    state: GhostlockUiState,
+    actions: GhostlockActions,
+) {
+    OverlayBottomSheet(
+        show = state.managerPickerVisible,
+        title = stringResource(R.string.manager_picker_title),
+        allowDismiss = true,
+        onDismissRequest = actions::onCloseManagerPicker,
+        startAction = {},
+        endAction = {},
+        content = {
+            var showAll by remember { mutableStateOf(false) }
+            val compatible = state.managerCandidates.filter { it.hasKsud }
+            val incompatible = state.managerCandidates.filterNot { it.hasKsud }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 480.dp)
+                    .navigationBarsPadding(),
+            ) {
+                item {
+                    ManagerPickerRow(
+                        title = stringResource(R.string.manager_summary_auto),
+                        subtitle = null,
+                        selected = state.selectedManagerPackage == null,
+                        onClick = { actions.onManagerSelected(null) },
+                    )
+                }
+                if (compatible.isEmpty() && incompatible.isEmpty()) {
+                    item {
+                        Text(
+                            text = stringResource(R.string.manager_picker_empty),
+                            fontSize = 13.sp,
+                            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                        )
+                    }
+                }
+                items(compatible) { candidate ->
+                    ManagerPickerRow(
+                        title = candidate.label,
+                        subtitle = candidate.packageName,
+                        selected = candidate.packageName == state.selectedManagerPackage,
+                        onClick = { actions.onManagerSelected(candidate.packageName) },
+                    )
+                }
+                if (incompatible.isNotEmpty()) {
+                    item {
+                        TextButton(
+                            text = stringResource(
+                                if (showAll) R.string.manager_hide_all else R.string.manager_show_all,
+                            ),
+                            onClick = { showAll = !showAll },
+                            colors = ButtonDefaults.textButtonColorsPrimary(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp),
+                        )
+                    }
+                    if (showAll) {
+                        items(incompatible) { candidate ->
+                            ManagerPickerRow(
+                                title = candidate.label,
+                                subtitle = stringResource(R.string.manager_no_ksud),
+                                selected = candidate.packageName == state.selectedManagerPackage,
+                                muted = true,
+                                onClick = { actions.onManagerSelected(candidate.packageName) },
+                            )
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun ManagerPickerRow(
+    title: String,
+    subtitle: String?,
+    selected: Boolean,
+    muted: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = title,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = if (muted) {
+                    MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                } else {
+                    MiuixTheme.colorScheme.onSurface
+                },
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = subtitle,
+                    fontSize = 11.5.sp,
+                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (selected) {
+            Text(
+                text = "✓",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = MiuixTheme.colorScheme.primary,
+            )
         }
     }
 }

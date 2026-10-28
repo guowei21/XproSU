@@ -71,6 +71,7 @@ class GhostlockViewModel(
                 cpuPairLabels = repository.availableCpuPairLabels(),
                 cpuPairIndex = idx,
                 tcpRouteEnabled = repository.tcpRouteEnabled(),
+                selectedManagerPackage = repository.selectedManagerPackage(),
             )
         }
         viewModelScope.launch { refreshSnapshot() }
@@ -98,6 +99,37 @@ class GhostlockViewModel(
         val pair = pairs.getOrNull(index) ?: return
         repository.selectCpuPair(pair)
         mutableState.update { it.copy(cpuPairIndex = index) }
+    }
+
+    /** 打开根管理器选择器：先弹面板，再异步扫描已安装应用。 */
+    fun onOpenManagerPicker() {
+        mutableState.update {
+            it.copy(
+                managerPickerVisible = true,
+                selectedManagerPackage = repository.selectedManagerPackage(),
+            )
+        }
+        viewModelScope.launch {
+            val candidates = repository.installedManagers()
+            mutableState.update {
+                it.copy(
+                    managerCandidates = candidates,
+                    selectedManagerPackage = repository.selectedManagerPackage(),
+                )
+            }
+        }
+    }
+
+    fun onCloseManagerPicker() {
+        mutableState.update { it.copy(managerPickerVisible = false) }
+    }
+
+    /** [packageName] 为 null 表示恢复自动（内置优先级）。 */
+    fun onManagerSelected(packageName: String?) {
+        repository.setSelectedManagerPackage(packageName)
+        mutableState.update {
+            it.copy(selectedManagerPackage = packageName, managerPickerVisible = false)
+        }
     }
 
     fun onRun() {
@@ -179,6 +211,7 @@ class GhostlockViewModel(
                 socName = snapshot.socName,
                 kernelSupported = snapshot.kernelSupported,
                 safeModeEnabled = snapshot.safeModeEnabled,
+                selectedManagerPackage = repository.selectedManagerPackage(),
             )
         }
     }

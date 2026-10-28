@@ -69,6 +69,19 @@ class AndroidGhostlockRepository(
         prefs.edit().putBoolean(KEY_TCP_ROUTE, enabled).apply()
     }
 
+    override fun selectedManagerPackage(): String? =
+        prefs.getString(ManagerScanner.PREF_KEY, null)?.takeIf { it.isNotBlank() }
+
+    override fun setSelectedManagerPackage(pkg: String?) {
+        prefs.edit().putString(ManagerScanner.PREF_KEY, pkg).apply()
+    }
+
+    override suspend fun installedManagers(): List<ManagerScanner.Candidate> =
+        withContext(Dispatchers.IO) {
+            runCatching { ManagerScanner.scan(appContext.packageManager, appContext.packageName) }
+                .getOrDefault(emptyList())
+        }
+
     override suspend fun snapshot(): KernelSnapshot = KernelSnapshot(
         deviceName = resolveDeviceName(),
         kernelRelease = System.getProperty("os.version", "unknown").orEmpty(),
@@ -304,11 +317,20 @@ class AndroidGhostlockRepository(
     private fun firstValidProperty(vararg keys: String): String? =
         keys.asSequence().firstNotNullOfOrNull { validDeviceName(systemProperty(it)) }
 
+    /**
+     * 找出提供 ksud 的管理器并复制成 `files/ksud`。
+     *
+     * 顺序 = 手动选择优先 + 内置列表兜底（见 [ManagerScanner.resolvePackages]）：
+     * 选择项被卸载或缺 libksud.so 时自动回退，不会让提权整体失败。
+     */
     private fun prepareKsud(workDir: File, onLog: (String) -> Unit): File? {
-        val packages = listOf("me.weishu.kernelsu.pr", "me.weishu.kernelsu", "com.resukisu.resukisu", "com.kowx712.supermanager")
+        val chosen = selectedManagerPackage()
+        val packages = ManagerScanner.resolvePackages(chosen)
         var installed = false
         for (packageName in packages) {
-            val appInfo = runCatching { appContext.packageManager.getApplicationInfo(packageName, 0) }.getOrNull() ?: continue
+            val appInfo = runCatching {
+                appContext.packageManager.getApplicationInfo(packageName, 0)
+            }.getOrNull() ?: continue
             installed = true
             val source = File(appInfo.nativeLibraryDir, "libksud.so")
             if (!source.isFile) continue
@@ -316,10 +338,18 @@ class AndroidGhostlockRepository(
             runCatching {
                 source.inputStream().use { input -> output.outputStream().use { input.copyTo(it) } }
                 runCatching { Os.chmod(output.absolutePath, 448) }
+                onLog("ksud source: $packageName")
                 return output
             }.onFailure { onLog("copy ksud failed: ${it.message}") }
         }
-        if (!installed) onLog("KernelSU/ReSukiSU/KowSU app not installed")
+        when {
+            !installed && chosen.isNullOrBlank() ->
+                onLog("KernelSU/ReSukiSU/BakaSU/KowSU app not installed")
+            !installed ->
+                onLog("selected manager $chosen is not installed; no fallback found")
+            else ->
+                onLog("manager app(s) found but none provides libksud.so")
+        }
         return null
     }
 

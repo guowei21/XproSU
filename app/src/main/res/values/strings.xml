@@ -41,4 +41,13 @@
     <string name="diagnostics_log_action">Copy to clipboard</string>
     <string name="diagnostics_log_empty">No log stored on this device yet</string>
     <string name="diagnostics_log_copied">Log copied</string>
+
+    <string name="manager_label">Root manager</string>
+    <string name="manager_summary_auto">Auto (recommended)</string>
+    <string name="manager_choose">Choose</string>
+    <string name="manager_picker_title">Choose root manager</string>
+    <string name="manager_picker_empty">No apps found</string>
+    <string name="manager_no_ksud">No libksud.so detected, may not work</string>
+    <string name="manager_show_all">Show all apps</string>
+    <string name="manager_hide_all">Show compatible only</string>
 </resources>
