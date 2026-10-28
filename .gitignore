@@ -32,7 +32,9 @@ table.json
 local.properties.bak-*
 ghostlock_new
 engine_flags*.rsp
-dist/
+dist/*
+vendor/
+.zcode/
 *.apk
 !dist/.gitkeep
 evidence/
