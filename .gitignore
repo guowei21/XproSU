@@ -32,7 +32,8 @@ table.json
 local.properties.bak-*
 ghostlock_new
 engine_flags*.rsp
-dist/
+dist/*
+vendor/
 *.apk
 !dist/.gitkeep
 evidence/
@@ -55,3 +56,4 @@ tools/extract_rs/target/
 .vscode/
 Thumbs.db
 *.apk.tmp
+.zcode/
