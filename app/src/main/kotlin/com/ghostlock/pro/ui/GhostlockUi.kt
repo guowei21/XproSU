@@ -116,7 +116,6 @@ interface GhostlockActions {
     fun onClearLogs() = Unit
     fun onExportLogs() = Unit
     fun onSafeModeChanged(enabled: Boolean)
-    fun onTcpRouteChanged(enabled: Boolean) = Unit
     fun onCpuPairSelected(index: Int) = Unit
     fun onOpenManagerPicker() = Unit
     fun onCloseManagerPicker() = Unit
@@ -212,8 +211,6 @@ private fun PortraitContent(
             MaintenanceCard(
                 safeModeEnabled = state.safeModeEnabled,
                 onSafeModeChanged = actions::onSafeModeChanged,
-                tcpRouteEnabled = state.tcpRouteEnabled,
-                onTcpRouteChanged = actions::onTcpRouteChanged,
                 cpuPairLabels = state.cpuPairLabels,
                 cpuPairIndex = state.cpuPairIndex,
                 onCpuPairSelected = actions::onCpuPairSelected,
@@ -282,8 +279,6 @@ private fun LandscapeContent(
             MaintenanceCard(
                 safeModeEnabled = state.safeModeEnabled,
                 onSafeModeChanged = actions::onSafeModeChanged,
-                tcpRouteEnabled = state.tcpRouteEnabled,
-                onTcpRouteChanged = actions::onTcpRouteChanged,
                 cpuPairLabels = state.cpuPairLabels,
                 cpuPairIndex = state.cpuPairIndex,
                 onCpuPairSelected = actions::onCpuPairSelected,
@@ -568,8 +563,6 @@ private fun ProgressPanel(progress: Int, labelRes: Int) {
 private fun MaintenanceCard(
     safeModeEnabled: Boolean,
     onSafeModeChanged: (Boolean) -> Unit,
-    tcpRouteEnabled: Boolean,
-    onTcpRouteChanged: (Boolean) -> Unit,
     cpuPairLabels: List<String>,
     cpuPairIndex: Int,
     onCpuPairSelected: (Int) -> Unit,
@@ -587,20 +580,6 @@ private fun MaintenanceCard(
                 candidates = managerCandidates,
                 selectedPackage = selectedManagerPackage,
                 onOpen = onOpenManagerPicker,
-            )
-
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.06f)),
-            )
-
-            SwitchPreference(
-                checked = tcpRouteEnabled,
-                onCheckedChange = onTcpRouteChanged,
-                title = stringResource(R.string.tcp_route_label),
-                summary = stringResource(R.string.tcp_route_summary),
             )
 
             Box(
@@ -759,12 +738,20 @@ private fun ManagerSelectorRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        TextButton(
-            text = stringResource(R.string.manager_choose),
-            onClick = onOpen,
-            colors = ButtonDefaults.textButtonColorsPrimary(),
-            modifier = Modifier.height(40.dp),
-        )
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(MiuixTheme.colorScheme.primary)
+                .clickable(onClick = onOpen)
+                .padding(horizontal = 14.dp, vertical = 6.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.manager_choose),
+                fontSize = 12.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+            )
+        }
     }
 }
 

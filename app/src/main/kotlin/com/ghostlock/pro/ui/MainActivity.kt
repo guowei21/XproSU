@@ -93,8 +93,11 @@ private fun GhostlockRoute(
             override fun onClearLogs() = viewModel.clearLogs()
             override fun onExportLogs() = viewModel.exportDiagnosticLogs()
             override fun onSafeModeChanged(enabled: Boolean) = viewModel.toggleSafeMode(enabled)
-            override fun onTcpRouteChanged(enabled: Boolean) = viewModel.toggleTcpRoute(enabled)
             override fun onCpuPairSelected(index: Int) = viewModel.onCpuPairSelected(index)
+            override fun onOpenManagerPicker() = viewModel.onOpenManagerPicker()
+            override fun onCloseManagerPicker() = viewModel.onCloseManagerPicker()
+            override fun onManagerSelected(packageName: String?) =
+                viewModel.onManagerSelected(packageName)
         },
     )
 }

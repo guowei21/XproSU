@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- 公开版不联网：没有激活、没有心跳、没有日志上传，因此也不申请 INTERNET。 -->
+    <!-- 提权引擎用 AF_INET 回环 TCP 对（tcp_make_pair）做 pselect 观测；Android 在缺少
+         INTERNET 权限时，连 loopback socket() 都会直接返回 EPERM。App 自身没有任何联网
+         功能（没有激活、没有心跳、没有日志上传），这个权限只服务于本机回环 socket。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- 「根管理器」需要列出任意第三方应用：任何携带 libksud.so 的应用都能提供 ksud。 -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <queries>
