@@ -40,12 +40,15 @@ jobs:
           CC="${{ runner.temp }}/ondk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang"
           "$CC" --version
           "$CC" -O2 -Wall -Wextra -o cve98260-trigger tools/cve-2026-98260/trigger.c
-          ls -l cve98260-trigger
-          file cve98260-trigger
+          "$CC" -O2 -Wall -Wextra -o cve98260-perf tools/cve-2026-98260/perf_kaslr.c
+          ls -l cve98260-trigger cve98260-perf
+          file cve98260-trigger cve98260-perf
 
       - name: Upload trigger binary
         uses: actions/upload-artifact@v4
         with:
-          name: cve98260-trigger
-          path: cve98260-trigger
+          name: cve98260-tools
+          path: |
+            cve98260-trigger
+            cve98260-perf
           if-no-files-found: error
