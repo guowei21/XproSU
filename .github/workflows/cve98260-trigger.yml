@@ -1,0 +1,51 @@
+name: cve98260-trigger
+
+# Builds the CVE-2026-98260 trigger probe (tools/cve-2026-98260/trigger.c)
+# with the same ONDK toolchain the APK build uses, and uploads the aarch64
+# binary.  Run it manually from the cve-2026-98260 branch:
+#   gh workflow run cve98260-trigger --ref cve-2026-98260
+on:
+  workflow_dispatch:
+
+env:
+  ONDK_VERSION: "r30.1"
+
+jobs:
+  trigger:
+    name: Build trigger probe
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache ONDK
+        id: ondk-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ondk
+          key: ondk-${{ env.ONDK_VERSION }}-linux
+
+      - name: Download ONDK toolchain
+        if: steps.ondk-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          url="https://github.com/topjohnwu/ondk/releases/download/${ONDK_VERSION}/ondk-${ONDK_VERSION}-linux.tar.xz"
+          mkdir -p "${{ runner.temp }}/ondk"
+          curl -fL "$url" -o "${{ runner.temp }}/ondk.tar.xz"
+          tar -C "${{ runner.temp }}/ondk" --strip-components=1 -xf "${{ runner.temp }}/ondk.tar.xz"
+
+      - name: Build trigger
+        run: |
+          set -euo pipefail
+          CC="${{ runner.temp }}/ondk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android35-clang"
+          "$CC" --version
+          "$CC" -O2 -Wall -Wextra -o cve98260-trigger tools/cve-2026-98260/trigger.c
+          ls -l cve98260-trigger
+          file cve98260-trigger
+
+      - name: Upload trigger binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: cve98260-trigger
+          path: cve98260-trigger
+          if-no-files-found: error
