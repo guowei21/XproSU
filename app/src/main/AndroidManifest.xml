@@ -10,8 +10,13 @@
     <queries>
         <package android:name="me.weishu.kernelsu.pr" />
         <package android:name="me.weishu.kernelsu" />
+        <package android:name="com.rifsxd.ksunext" />
+        <package android:name="com.sukisu.ultra" />
+        <package android:name="com.sukisu.ultra.pr" />
         <package android:name="com.resukisu.resukisu" />
         <package android:name="org.bakasu.bakasu" />
+        <package android:name="me.yuki.fina.pr" />
+        <package android:name="me.yuki.fina" />
         <package android:name="com.kowx712.supermanager" />
     </queries>
     <application

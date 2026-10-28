@@ -332,19 +332,19 @@ class AndroidGhostlockRepository(
                 appContext.packageManager.getApplicationInfo(packageName, 0)
             }.getOrNull() ?: continue
             installed = true
-            val source = File(appInfo.nativeLibraryDir, "libksud.so")
-            if (!source.isFile) continue
+            // 有的分支 extractNativeLibs=false，ksud 只在 APK 内；两种形态都认。
+            val bytes = ManagerScanner.readKsud(appInfo) ?: continue
             val output = File(workDir, "ksud")
             runCatching {
-                source.inputStream().use { input -> output.outputStream().use { input.copyTo(it) } }
-                runCatching { Os.chmod(output.absolutePath, 448) }
-                onLog("ksud source: $packageName")
+                output.writeBytes(bytes)
+                Os.chmod(output.absolutePath, 448)
+                onLog("ksud source: $packageName (${bytes.size} bytes)")
                 return output
             }.onFailure { onLog("copy ksud failed: ${it.message}") }
         }
         when {
             !installed && chosen.isNullOrBlank() ->
-                onLog("KernelSU/ReSukiSU/BakaSU/KowSU app not installed")
+                onLog("KernelSU/ReSukiSU/BakaSU/KowSU/FinaSU app not installed")
             !installed ->
                 onLog("selected manager $chosen is not installed; no fallback found")
             else ->
