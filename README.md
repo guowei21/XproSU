@@ -122,11 +122,13 @@ APK                                    设备                              浏�
 
 - **随包带 ksud**：`app/src/main/jniLibs/arm64-v8a/libksud.so` 是 DikSU `v3.3.0-57`
   的 ksud 二进制（6.4 MB，内含 `android14-6.1_kernelsu.ko` 与 WebUI 前端）。App 启动
-  提权前把它复制成 `files/ksud`，不需要设备上预装任何管理器。
+  提权前把它复制成 `files/ksud`，不需要设备上预装任何管理器。该版本没把
+  `applabel.dex` 编进去，WebUI 应用列表会退化到「包名最后一段」；App 因此另带一份上游
+  的 `assets/applabel.dex`（GPL-3.0），根脚本放进 `/data/adb/ksu/bin/` 供 ksud 使用。
 - **不按包名找管理器**：DikSU 的管理器可以在设备上改成随机包名；只有在没带随包副本时
   才回落到扫描已安装应用的 `libksud.so`（`extractNativeLibs=false` 时直接读 APK）。
-- **不传 `--package-name`**：`libksud.so` 里烤着它自己的管理器包名，late-load 末尾用它
-  `am start`；传一个猜的包名只会拉错。
+- **不传 `--package-name`**：它只用于 late-load 末尾 `am start <pkg>/...MainActivity`
+  重启管理器；我们的 App 没有 DikSU 的 Activity，传了也只会拉错，留空即可。
 - **管理页面只对本机开放**：ksud 绑 `127.0.0.1`，令牌落在 `/data/adb/ksu/webui.token`
   （0600 root）。root 脚本把它拼成 `http://127.0.0.1:<port>/?k=<token>` 写进
   `files/webui.url`（0600，属主是本 App），App 的「管理」按钮直接用 WebView 打开。

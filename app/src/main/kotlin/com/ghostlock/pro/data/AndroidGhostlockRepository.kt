@@ -36,6 +36,12 @@ class AndroidGhostlockRepository(
         const val OffsetsFileName = "offsets.json"
         /** AES-256-GCM 密封的同一张表，见 tools/pack_offsets_local.py。 */
         const val OffsetsAsset = "offsets.enc"
+        /**
+         * DikSU 的标签提取器（AppLabelDumper，dex 035，GPL-3.0）。
+         * 随包的 ksud 没把这个资产编进去：没有它，WebUI 的应用列表只能退化到
+         * 包名最后一段。App 把它解到 files/，根脚本再放进 /data/adb/ksu/bin/。
+         */
+        const val AppLabelAsset = "applabel.dex"
         /** 各家管理器把 ksud 本体放在 `lib/<abi>/` 下，名字一直是这个。 */
         const val KsudLibrary = "libksud.so"
         /** 复制出来的临时文件名；引擎脚本按 `$HOME_DIR/ksud` 找它。 */
@@ -114,6 +120,20 @@ class AndroidGhostlockRepository(
         }
     }
 
+    /**
+     * 把随包的 `applabel.dex` 解到 files/，根脚本会把它放到
+     * `/data/adb/ksu/bin/applabel.dex`：ksud 生成 WebUI 应用列表时用它取应用名。
+     * 解不出来不中止提权——只是列表里的标签退化成包名尾段。
+     */
+    private fun ensureAppLabelDex(onLog: (String) -> Unit) {
+        runCatching {
+            val dex = appContext.assets.open(AppLabelAsset).use { it.readBytes() }
+            File(filesDir, AppLabelAsset).writeBytes(dex)
+        }.onFailure {
+            onLog("warning: applabel.dex unavailable: " + (it.message ?: it::class.simpleName))
+        }
+    }
+
 
     /**
      * 运行一次提权。
@@ -131,6 +151,7 @@ class AndroidGhostlockRepository(
             val binary = File(appContext.applicationInfo.nativeLibraryDir, "libghostlock.so")
             require(binary.isFile) { "missing native binary: " + binary.absolutePath }
             if (!ensureLocalOffsets(onLog)) return 1
+            ensureAppLabelDex(onLog)
             // 新一次运行 = 新一次会话：上一次的地址与状态先作废，
             // 不然页面会打开一个已经轮换过令牌的旧地址。
             runCatching { File(workDir, WEBUI_URL_FILE).delete() }
