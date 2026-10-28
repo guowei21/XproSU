@@ -2,11 +2,11 @@ name: build-apk
 
 on:
   push:
-    branches: [main]
+    branches: [apk-root, main]
     tags: ["v*"]
     paths-ignore: ["**.md", "server/**", "tools/**", "docs/**"]
   pull_request:
-    branches: [main]
+    branches: [apk-root, main]
   workflow_dispatch:
     inputs:
       build_type:
