@@ -42,8 +42,9 @@ jobs:
           "$CC" -O2 -Wall -Wextra -o cve98260-trigger tools/cve-2026-98260/trigger.c
           "$CC" -O2 -Wall -Wextra -o cve98260-perf tools/cve-2026-98260/perf_kaslr.c
           "$CC" -O2 -Wall -Wextra -o cve98260-selinux tools/cve-2026-98260/selinux_write.c
-          ls -l cve98260-trigger cve98260-perf cve98260-selinux
-          file cve98260-trigger cve98260-perf cve98260-selinux
+          "$CC" -O2 -Wall -Wextra -pthread -o cve98260-oracle tools/cve-2026-98260/oracle.c
+          ls -l cve98260-trigger cve98260-perf cve98260-selinux cve98260-oracle
+          file cve98260-trigger cve98260-perf cve98260-selinux cve98260-oracle
 
       - name: Upload trigger binary
         uses: actions/upload-artifact@v4
@@ -53,4 +54,5 @@ jobs:
             cve98260-trigger
             cve98260-perf
             cve98260-selinux
+            cve98260-oracle
           if-no-files-found: error
