@@ -24,6 +24,14 @@ static char g_root_script_path[300] = "/data/local/tmp/.ghostlock_root.sh";
  * and a leftover cannot be read as this run's output */
 static char g_ksu_log_path[320] = "/data/local/tmp/.ghostlock_ksu.log";
 
+/* Safe mode cannot ride on the environment: the root worker is exec'd with a
+ * minimal envp (see child_main), so GHOSTLOCK_DISABLE_MODULES never reaches
+ * the script.  The decision travels through a file, same as TP_PHYS, and the
+ * file is removed when the toggle is off so a stale marker cannot disable
+ * modules on the next launch. */
+static int g_disable_modules = 0;
+static const char *const g_safe_mode_path = "/data/local/tmp/_gl_safe_mode";
+
 /* MTK and XRing use different physical mappings from the Qualcomm default.
  * W1 has no root and /proc is SELinux-blocked: read SoC properties from the
  * shared property area instead. */
@@ -556,7 +564,12 @@ static void init_runtime_paths(void) {
     snprintf(g_ksu_log_path, sizeof(g_ksu_log_path),
              "%s/.ghostlock_ksu.log", g_home_dir);
   }
-  pr_info("runtime home=%s script=%s\n", g_home_dir, g_root_script_path);
+  /* read the flag before the exploit runs: getenv() is unsafe afterwards,
+   * the exploit can leave `environ` pointing at unmapped memory. */
+  const char *safe = getenv("GHOSTLOCK_DISABLE_MODULES");
+  g_disable_modules = (safe && safe[0] == '1');
+  pr_info("runtime home=%s script=%s safe_mode=%d\n", g_home_dir,
+          g_root_script_path, g_disable_modules);
 }
 
 static void write_root_script(void) {
@@ -627,8 +640,11 @@ static void write_root_script(void) {
       "fi\n"
       "KMI=\"${AVER}-${KVER}\"\n"
       "# safe mode: disable all modules before exec ksud\n"
-      "if [ \"$GHOSTLOCK_DISABLE_MODULES\" = \"1\" ]; then\n"
+      "# safe mode: the worker shell only gets PATH/HOME, so the engine also\n"
+      "# publishes the decision as a marker file (write_safe_mode_file).\n"
+      "if [ \"$GHOSTLOCK_DISABLE_MODULES\" = \"1\" ] || [ -f /data/local/tmp/_gl_safe_mode ]; then\n"
       "  echo \"[*] safe mode: disabling all modules under /data/adb/modules\" >>\"$LOG\"\n"
+      "  [ -d /data/adb/modules ] || echo '[*] safe mode: /data/adb/modules absent' >>\"$LOG\"\n"
       "  n=0\n"
       "  for m in /data/adb/modules/*/; do\n"
       "    [ -d \"$m\" ] || continue\n"
@@ -882,6 +898,28 @@ static void write_tp_phys_file(uintptr_t phys) {
   chmod("/data/local/tmp/_gl_tp_phys", 0666);
 }
 
+/* Publish the safe-mode decision for the root script.  The worker shell only
+ * sees PATH and HOME (minimal envp), so a file is the only carrier that
+ * survives; when the toggle is off the marker is removed, otherwise a marker
+ * left by an earlier run would keep modules disabled on every later launch. */
+static void write_safe_mode_file(void) {
+  if (!g_disable_modules) {
+    unlink(g_safe_mode_path);
+    return;
+  }
+  int fd = open(g_safe_mode_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+  if (fd < 0) {
+    pr_warning("safe mode marker open failed path=%s errno=%d\n",
+               g_safe_mode_path, errno);
+    return;
+  }
+  ssize_t w = write(fd, "1\n", 2);
+  (void)w;
+  close(fd);
+  chmod(g_safe_mode_path, 0666);
+  pr_info("safe mode marker written path=%s\n", g_safe_mode_path);
+}
+
 static void park_rooted_child(void) {
   FILE *f = fopen("/proc/self/oom_score_adj", "w");
   if (f) {
@@ -1015,6 +1053,8 @@ static void child_main(struct child_pipes *p) {
     write_tp_phys_file(p0_kernel_phys_load + add);
     child_diag("wrote tp_phys", (long)add);
   }
+  /* the toggle is consumed by the script, so publish it before the fork */
+  write_safe_mode_file();
   child_diag("about to fork worker", (long)getuid());
   pid_t worker = fork();
   child_diag("fork returned", (long)worker);

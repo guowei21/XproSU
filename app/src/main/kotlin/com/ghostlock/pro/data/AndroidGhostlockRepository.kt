@@ -37,6 +37,8 @@ class AndroidGhostlockRepository(
         const val KsuLogName = ".ghostlock_ksu.log"
 
         const val KEY_TCP_ROUTE = "tcp_route"
+        /** 兼容模式开关必须跨进程存活：写进 prefs，重启后仍生效。 */
+        const val KEY_SAFE_MODE = "safe_mode"
     }
 
     private val appContext = context.applicationContext
@@ -44,7 +46,9 @@ class AndroidGhostlockRepository(
     private val offsetsFile get() = File(filesDir, OffsetsFileName)
     private val cpuPairs = mutableListOf<CpuPair>()
     private var selectedPair: CpuPair? = null
-    private var safeModeEnabled = false
+    private var safeModeOn: Boolean
+        get() = prefs.getBoolean(KEY_SAFE_MODE, false)
+        set(value) = prefs.edit().putBoolean(KEY_SAFE_MODE, value).apply()
     private val prefs = appContext.getSharedPreferences("ghostlock_settings", Context.MODE_PRIVATE)
 
     init {
@@ -88,11 +92,11 @@ class AndroidGhostlockRepository(
         socName = resolveSocName(),
         kernelSupported = isKernelSupported(),
         cpuPairLabel = bestCpuPairLabel(),
-        safeModeEnabled = safeModeEnabled,
+        safeModeEnabled = safeModeOn,
     )
 
     override fun setSafeModeEnabled(enabled: Boolean) {
-        safeModeEnabled = enabled
+        safeModeOn = enabled
     }
 
 
@@ -183,7 +187,7 @@ class AndroidGhostlockRepository(
                 environment()["GHOSTLOCK_CORE"] = pair.primary.toString()
                 environment()["GHOSTLOCK_CONSUMER_CORE"] = pair.consumer.toString()
                 environment()["GHOSTLOCK_ROUTE"] = if (tcpRouteEnabled()) "tcp" else "mcast"
-                if (safeModeEnabled) environment()["GHOSTLOCK_DISABLE_MODULES"] = "1"
+                if (safeModeOn) environment()["GHOSTLOCK_DISABLE_MODULES"] = "1"
             }
         return try {
             runProcess(command, onLog = {}, captureOutput = false)
