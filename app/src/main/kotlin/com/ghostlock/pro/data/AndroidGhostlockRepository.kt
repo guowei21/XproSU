@@ -35,6 +35,8 @@ class AndroidGhostlockRepository(
         /** AES-256-GCM 密封的同一张表，见 tools/pack_offsets_local.py。 */
         const val OffsetsAsset = "offsets.enc"
         const val KsuLogName = ".ghostlock_ksu.log"
+        /** 管理器 libksud.so 的真实路径；引擎优先执行它而不是复制品。 */
+        const val KsudPathName = ".ksud_path"
 
         const val KEY_TCP_ROUTE = "tcp_route"
         /** 兼容模式开关必须跨进程存活：写进 prefs，重启后仍生效。 */
@@ -351,11 +353,21 @@ class AndroidGhostlockRepository(
             // 有的分支 extractNativeLibs=false，ksud 只在 APK 内；两种形态都认。
             val bytes = ManagerScanner.readKsud(appInfo) ?: continue
             val output = File(workDir, "ksud")
+            val hint = File(workDir, KsudPathName)
+            // 真实路径优先：ksud 靠自身路径判断归属哪个管理器，副本没有这层信息。
+            val realPath = ManagerScanner.nativeKsudPath(appInfo)
             runCatching {
                 output.writeBytes(bytes)
                 Os.chmod(output.absolutePath, 448)
                 handedOverPackage = packageName
-                onLog("ksud source: $packageName (${bytes.size} bytes)")
+                if (realPath != null) {
+                    hint.writeText(realPath)
+                    onLog("ksud source: $packageName native=$realPath")
+                } else {
+                    // APK-only shape: nothing to point at, the copy is the only option
+                    hint.delete()
+                    onLog("ksud source: $packageName extracted=${bytes.size} bytes (no native dir)")
+                }
                 return output
             }.onFailure { onLog("copy ksud failed: ${it.message}") }
         }
@@ -367,6 +379,9 @@ class AndroidGhostlockRepository(
             else ->
                 onLog("manager app(s) found but none provides libksud.so")
         }
+        // no ksud this run: drop a stale hint so the engine cannot execute a
+        // manager path that is no longer the one we handed over
+        runCatching { File(workDir, KsudPathName).delete() }
         return null
     }
 

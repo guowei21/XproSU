@@ -122,4 +122,17 @@ object ManagerScanner {
             ?: zip.entries().asSequence()
                 .firstOrNull { it.name.startsWith(LIB_PREFIX) && it.name.endsWith("/$KSUD_LIB") }
     }
+
+    /**
+     * `libksud.so` 在管理器自身目录里的真实路径（`extractNativeLibs=true`）。
+     *
+     * 引擎必须优先执行这个路径，而不是 App 复制出来的副本：SukiSU/KernelSU 的
+     * ksud 靠自身路径（`/data/app/~~x/<pkg>-y/lib/arm64/libksud.so`）判断它归属
+     * 哪个管理器，副本在私有目录里没有这层信息，late-load 之后管理器不认。
+     *
+     * `extractNativeLibs=false` 的管理器 native 目录是空的，返回 null，调用方
+     * 退回 APK 内提取的副本。
+     */
+    fun nativeKsudPath(appInfo: ApplicationInfo): String? =
+        nativeKsud(appInfo)?.absolutePath
 }
