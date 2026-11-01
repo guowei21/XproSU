@@ -62,7 +62,7 @@ static int started_by_preload(void) {
   const char *preload = getenv("LD_PRELOAD");
   if (!preload || !preload[0]) return 0;
   Dl_info info;
-  if (dladdr((void *)&gl_preload_ctor, &info) && info.dli_fname) {
+  if (dladdr((void *)&gl_preload_main, &info) && info.dli_fname) {
     const char *base = strrchr(info.dli_fname, '/');
     base = base ? base + 1 : info.dli_fname;
     if (base[0] && strstr(preload, base)) return 1;
