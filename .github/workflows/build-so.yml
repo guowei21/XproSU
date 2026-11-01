@@ -1,0 +1,85 @@
+name: build-so
+
+# Builds the GhostLock engine as an LD_PRELOAD payload (.so) for a specific
+# device family. The APK workflow does not cover this: it only produces the
+# ghostlock PIE binary.
+on:
+  push:
+    branches: [x100pro-preload]
+    paths:
+      - "src/**"
+      - "Makefile"
+      - ".github/workflows/build-so.yml"
+  workflow_dispatch:
+    inputs:
+      target_config:
+        description: "target header (src/core/<name>)"
+        required: true
+        default: "target_x100pro.h"
+        type: string
+      api:
+        description: "Android API level"
+        required: true
+        default: "35"
+        type: string
+
+concurrency:
+  group: build-so-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ONDK_VERSION: "r30.1"
+  TARGET_CONFIG_INPUT: ${{ inputs.target_config || 'target_x100pro.h' }}
+  API_INPUT: ${{ inputs.api || '35' }}
+
+jobs:
+  so:
+    name: Build LD_PRELOAD payload
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache ONDK
+        id: ondk-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ondk
+          key: ondk-${{ env.ONDK_VERSION }}-linux
+
+      - name: Download ONDK toolchain
+        if: steps.ondk-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          url="https://github.com/topjohnwu/ondk/releases/download/${ONDK_VERSION}/ondk-${ONDK_VERSION}-linux.tar.xz"
+          mkdir -p "${{ runner.temp }}/ondk"
+          curl -fL "$url" -o "${{ runner.temp }}/ondk.tar.xz"
+          tar -C "${{ runner.temp }}/ondk" --strip-components=1 -xf "${{ runner.temp }}/ondk.tar.xz"
+
+      - name: Show toolchain
+        run: |
+          set -euo pipefail
+          "${{ runner.temp }}/ondk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${API_INPUT}-clang" --version
+          git rev-parse HEAD
+
+      - name: Build libghostlock.so
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_HOME="${{ runner.temp }}/ondk"
+          export NDK_ROOT="$ANDROID_NDK_HOME"
+          make libghostlock.so API="${API_INPUT}" TARGET_CONFIG="${TARGET_CONFIG_INPUT}"
+          ls -l libghostlock.so
+          file libghostlock.so
+          sha256sum libghostlock.so
+          echo "---- dynamic ----"
+          "${{ runner.temp }}/ondk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -d libghostlock.so | head -30
+          echo "---- sections ----"
+          "${{ runner.temp }}/ondk/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -S libghostlock.so | head -40
+
+      - name: Upload payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: libghostlock-so
+          path: libghostlock.so
+          archive: false
+          if-no-files-found: error

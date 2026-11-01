@@ -84,9 +84,24 @@ ghostlock: $(SRCS) $(HDRS)
 	@echo "Target config: $(TARGET_CONFIG)"
 	$(NDK_CC) $(CFLAGS) $(LDFLAGS) $(filter %.c,$^) -o ghostlock
 
+# ── LD_PRELOAD payload build ───────────────────────────────────────────────
+# KSuRoot injects its payloads as LD_PRELOAD objects, so the same engine is
+# also built as a shared library with a constructor entry instead of main().
+# The device table is still selected at runtime by uname -r, but the address
+# layout constants (KIMAGE_TEXT_BASE & friends) live in the target header:
+#   make libghostlock.so API=35 TARGET_CONFIG=target_x100pro.h
+SO_SRCS := $(SRCS) src/core/preload_entry.c
+
+libghostlock.so: $(SO_SRCS) $(HDRS)
+	@echo "Using NDK compiler: $(NDK_CC)"
+	@echo "Target config: $(TARGET_CONFIG)"
+	$(NDK_CC) $(CFLAGS) -fPIC -shared -pthread -flto $(LDFLAGS_HARDEN) \
+	  $(SO_SRCS) -o libghostlock.so
+	@ls -l libghostlock.so
+
 product: ghostlock
 	@echo "=== ghostlock binary ready: ./ghostlock ==="
 	@echo "构建 APK: .\gradlew.bat :app:assembleDebug"
 
 clean:
-	rm -f ghostlock
+	rm -f ghostlock libghostlock.so
