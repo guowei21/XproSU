@@ -89,7 +89,14 @@ __attribute__((constructor)) static void gl_preload_ctor(void) {
     return;
   }
   if (started_by_preload()) {
-    pthread_join(th, NULL); /* helper must not exit before the engine is done */
+    /* The helper must not exit before the engine is done, but it must also
+     * never hang forever: give the run a bounded budget and then let the host
+     * continue with whatever state the engine reached. */
+    for (int i = 0; i < 1800; i++) {
+      if (pthread_tryjoin_np(th, NULL) == 0) return;
+      usleep(100000);
+    }
+    pthread_detach(th);
   } else {
     pthread_detach(th);
   }
