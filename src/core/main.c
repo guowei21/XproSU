@@ -16,6 +16,12 @@
 #include <sys/utsname.h>
 #include <strings.h>
 
+/* KSuRoot ships this engine as an LD_PRELOAD object: the preload entry owns
+ * the manager's stdout pipe and the on-disk transcript. A forked helper that
+ * parks (root daemon) or execs the root shell must drop both, otherwise the
+ * manager waits for an EOF that never comes. */
+extern void gl_preload_child_cleanup(void) __attribute__((weak));
+
 const struct kernel_offsets *active_offsets = NULL;
 
 static char g_home_dir[256] = "/data/local/tmp";
@@ -1176,7 +1182,11 @@ static pid_t spawn_child(struct child_pipes *p) {
   }
   pid_t child = fork();
   if (child < 0) return -1;
-  if (child == 0) { child_main(p); _exit(1); }
+  if (child == 0) {
+    if (gl_preload_child_cleanup) gl_preload_child_cleanup();
+    child_main(p);
+    _exit(1);
+  }
   close(p->task_w); close(p->cmd_r); close(p->uid_w);
   return child;
 }

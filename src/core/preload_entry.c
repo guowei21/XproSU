@@ -6,21 +6,28 @@
  * to happen before that process gets a chance to exit, so the constructor
  * blocks until run_exploit() returns.
  *
- * Two entry shapes:
- *   - LD_PRELOAD injection (helper process): run synchronously, then let the
- *     host program continue. A re-entrancy guard is exported into the
- *     environment so children that re-exec through the same LD_PRELOAD do not
- *     start a second engine instance.
- *   - dlopen (manager UI process): do NOT block the caller's main thread; run
- *     on a detached thread instead.
+ * Output plumbing (this file owns it):
+ *   - Everything the engine prints is mirrored to <GHOSTLOCK_HOME>/_gl_run.log,
+ *     so a wedged device still leaves a complete transcript on disk after the
+ *     reboot. The manager pipe gets a best-effort copy (non-blocking): a
+ *     manager that stops draining must never block the engine.
+ *   - Only this process keeps the manager pipe open. Forked children (root
+ *     helper, root shell worker, ksud chain) call gl_preload_child_cleanup()
+ *     so a parked daemon cannot hold the write end and stall the install UI
+ *     waiting for EOF.
  */
 
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <pthread.h>
-#include <time.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 extern int run_exploit(int argc, char **argv);
@@ -28,11 +35,122 @@ extern int run_exploit(int argc, char **argv);
 static pthread_mutex_t g_done_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_done_cv = PTHREAD_COND_INITIALIZER;
 static int g_done = 0;
+static int g_engine_rc = -1;
+
+/* manager stdout (original fd 1) and the on-disk transcript */
+static int g_app_out = -1;
+static int g_run_log = -1;
+
+static void gl_write_all(int fd, const char *s, size_t n, int timeout_ms) {
+  size_t off = 0;
+  while (off < n) {
+    ssize_t w = write(fd, s + off, n - off);
+    if (w > 0) {
+      off += (size_t)w;
+      continue;
+    }
+    if (w < 0 && (errno == EAGAIN || errno == EINTR)) {
+      struct pollfd pfd;
+      pfd.fd = fd;
+      pfd.events = POLLOUT;
+      pfd.revents = 0;
+      if (timeout_ms <= 0 || poll(&pfd, 1, timeout_ms) <= 0) return; /* drop */
+      continue;
+    }
+    return;
+  }
+}
+
+/* Runs inside the engine process: copy whatever the engine writes to our pipe
+ * into the transcript and, best effort, into the manager's pipe. */
+static void *gl_tee_main(void *arg) {
+  int rd = (int)(intptr_t)arg;
+  char buf[8192];
+  for (;;) {
+    ssize_t n = read(rd, buf, sizeof buf);
+    if (n <= 0) break;
+    if (g_run_log >= 0) gl_write_all(g_run_log, buf, (size_t)n, 2000);
+    if (g_app_out >= 0) gl_write_all(g_app_out, buf, (size_t)n, 200);
+  }
+  close(rd);
+  return NULL;
+}
+
+static void gl_start_capture(void) {
+  const char *home = getenv("GHOSTLOCK_HOME");
+  if (!home || !home[0]) home = "/data/local/tmp";
+  char path[256];
+  snprintf(path, sizeof path, "%s/_gl_run.log", home);
+  g_run_log = open(path, O_WRONLY | O_CREAT | O_APPEND, 0666);
+
+  int p[2];
+  if (pipe(p) != 0) {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    return;
+  }
+  g_app_out = dup(STDOUT_FILENO);
+  if (g_app_out >= 0) {
+    int fl = fcntl(g_app_out, F_GETFL, 0);
+    if (fl >= 0) fcntl(g_app_out, F_SETFL, fl | O_NONBLOCK);
+  }
+  dup2(p[1], STDOUT_FILENO);
+  dup2(p[1], STDERR_FILENO);
+  if (p[1] > STDERR_FILENO) close(p[1]);
+
+  pthread_t th;
+  if (pthread_create(&th, NULL, gl_tee_main, (void *)(intptr_t)p[0]) == 0)
+    pthread_detach(th);
+  else
+    close(p[0]);
+
+  setvbuf(stdout, NULL, _IONBF, 0);
+  setvbuf(stderr, NULL, _IONBF, 0);
+}
+
+/* Called from forked children before they exec the root shell / park / start
+ * ksud: drop both the manager pipe and the transcript handle. */
+void gl_preload_child_cleanup(void) {
+  if (g_app_out > STDERR_FILENO) {
+    close(g_app_out);
+    g_app_out = -1;
+  }
+  if (g_run_log > STDERR_FILENO) {
+    close(g_run_log);
+    g_run_log = -1;
+  }
+}
+
+static void gl_banner(void) {
+  char b[192];
+  time_t now = time(NULL);
+  struct tm tmv;
+  localtime_r(&now, &tmv);
+  int n = snprintf(b, sizeof b,
+                   "\n===== ghostlock preload pid=%d %04d-%02d-%02d %02d:%02d:%02d "
+                   "home=%s =====\n",
+                   (int)getpid(), tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+                   tmv.tm_hour, tmv.tm_min, tmv.tm_sec,
+                   getenv("GHOSTLOCK_HOME") ? getenv("GHOSTLOCK_HOME") : "?");
+  if (n <= 0) return;
+  if (n > (int)sizeof b - 1) n = (int)sizeof b - 1;
+  if (g_run_log >= 0) gl_write_all(g_run_log, b, (size_t)n, 2000);
+  if (g_app_out >= 0) gl_write_all(g_app_out, b, (size_t)n, 200);
+}
+
+static void gl_emit_manager_markers(int rc) {
+  if (rc != 0) return;
+  static const char m[] = "[*] exploit completed\n[*] done=1 root=1\n";
+  if (g_run_log >= 0) gl_write_all(g_run_log, m, sizeof m - 1, 2000);
+  if (g_app_out >= 0) gl_write_all(g_app_out, m, sizeof m - 1, 2000);
+}
 
 static void *gl_preload_main(void *arg) {
   (void)arg;
-  run_exploit(0, NULL);
+  int rc = run_exploit(0, NULL);
+  gl_emit_manager_markers(rc);
   pthread_mutex_lock(&g_done_lock);
+  g_engine_rc = rc;
   g_done = 1;
   pthread_cond_broadcast(&g_done_cv);
   pthread_mutex_unlock(&g_done_lock);
@@ -89,6 +207,9 @@ __attribute__((constructor)) static void gl_preload_ctor(void) {
   pthread_attr_t attr;
   int have_attr = pthread_attr_init(&attr) == 0;
   if (have_attr) pthread_attr_setstacksize(&attr, (size_t)8 << 20);
+
+  gl_start_capture();
+  gl_banner();
 
   pthread_t th;
   int rc = pthread_create(&th, have_attr ? &attr : NULL, gl_preload_main, NULL);
