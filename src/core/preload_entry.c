@@ -69,7 +69,13 @@ static void *gl_tee_main(void *arg) {
   for (;;) {
     ssize_t n = read(rd, buf, sizeof buf);
     if (n <= 0) break;
-    if (g_run_log >= 0) gl_write_all(g_run_log, buf, (size_t)n, 2000);
+    if (g_run_log >= 0) {
+      gl_write_all(g_run_log, buf, (size_t)n, 2000);
+      /* f2fs rolls back to the last checkpoint after a panic, which turns a
+       * buffered transcript into a file full of NULs. Make every line
+       * durable before the engine is allowed to touch the kernel again. */
+      fdatasync(g_run_log);
+    }
     if (g_app_out >= 0) gl_write_all(g_app_out, buf, (size_t)n, 200);
   }
   close(rd);
@@ -81,7 +87,7 @@ static void gl_start_capture(void) {
   if (!home || !home[0]) home = "/data/local/tmp";
   char path[256];
   snprintf(path, sizeof path, "%s/_gl_run.log", home);
-  g_run_log = open(path, O_WRONLY | O_CREAT | O_APPEND, 0666);
+  g_run_log = open(path, O_WRONLY | O_CREAT | O_APPEND | O_SYNC, 0666);
 
   int p[2];
   if (pipe(p) != 0) {
