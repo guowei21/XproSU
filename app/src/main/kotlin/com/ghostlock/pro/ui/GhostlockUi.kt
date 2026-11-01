@@ -120,6 +120,8 @@ interface GhostlockActions {
     fun onOpenManagerPicker() = Unit
     fun onCloseManagerPicker() = Unit
     fun onManagerSelected(packageName: String?) = Unit
+    /** 打开接管了 root 的管理器（提权完成后可用）。 */
+    fun onOpenManager() = Unit
 }
 
 @Composable
@@ -207,6 +209,12 @@ private fun PortraitContent(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        // 提权跑完之后才有意义：此时 root 已经在管理器手里
+        if (!state.running && state.progress >= 100) {
+            item(key = "open-manager") {
+                OpenManagerButton(onClick = actions::onOpenManager, modifier = Modifier.fillMaxWidth())
+            }
+        }
         item(key = "maintenance") {
             MaintenanceCard(
                 safeModeEnabled = state.safeModeEnabled,
@@ -269,6 +277,9 @@ private fun LandscapeContent(
                 onClick = actions::onRun,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (!state.running && state.progress >= 100) {
+                OpenManagerButton(onClick = actions::onOpenManager, modifier = Modifier.fillMaxWidth())
+            }
         }
         Column(
             modifier = Modifier
@@ -505,6 +516,22 @@ private fun RunButton(
                 .height(52.dp),
         )
     }
+}
+
+/**
+ * 提权完成后的交付动作：把用户送到真正接管 root 的那个管理器。
+ *
+ * 目标包名由仓库决定（见 GhostlockRepository.managerToOpen），UI 不猜。
+ */
+@Composable
+private fun OpenManagerButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    TextButton(
+        text = stringResource(R.string.manager_open),
+        enabled = true,
+        colors = ButtonDefaults.textButtonColorsPrimary(),
+        onClick = onClick,
+        modifier = modifier.height(52.dp),
+    )
 }
 
 /**

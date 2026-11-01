@@ -50,4 +50,7 @@
     <string name="manager_no_ksud">No libksud.so detected, may not work</string>
     <string name="manager_show_all">Show all apps</string>
     <string name="manager_hide_all">Show compatible only</string>
+    <string name="manager_open">Open root manager</string>
+    <string name="manager_not_found">No installed root manager found</string>
+    <string name="manager_launch_failed">Cannot launch that manager</string>
 </resources>

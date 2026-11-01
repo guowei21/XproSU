@@ -46,6 +46,8 @@ class AndroidGhostlockRepository(
     private val offsetsFile get() = File(filesDir, OffsetsFileName)
     private val cpuPairs = mutableListOf<CpuPair>()
     private var selectedPair: CpuPair? = null
+    /** 本轮真正接手 root 的管理器：ksud 就是从这个包复制出去的。 */
+    private var handedOverPackage: String? = null
     private var safeModeOn: Boolean
         get() = prefs.getBoolean(KEY_SAFE_MODE, false)
         set(value) = prefs.edit().putBoolean(KEY_SAFE_MODE, value).apply()
@@ -85,6 +87,15 @@ class AndroidGhostlockRepository(
             runCatching { ManagerScanner.scan(appContext.packageManager, appContext.packageName) }
                 .getOrDefault(emptyList())
         }
+
+    override fun managerToOpen(): String? {
+        fun installed(pkg: String): Boolean = runCatching {
+            appContext.packageManager.getApplicationInfo(pkg, 0)
+        }.isSuccess
+        handedOverPackage?.takeIf { installed(it) }?.let { return it }
+        selectedManagerPackage()?.takeIf { installed(it) }?.let { return it }
+        return ManagerScanner.BUILTIN.firstOrNull { installed(it) }
+    }
 
     override suspend fun snapshot(): KernelSnapshot = KernelSnapshot(
         deviceName = resolveDeviceName(),
@@ -150,6 +161,7 @@ class AndroidGhostlockRepository(
         workDir: File,
         binary: File,
     ): Int {
+        handedOverPackage = null
         if (prepareKsud(workDir, onLog) != null) onLog("ksud ready") else onLog("warning: ksud not found")
         // the root script creates its log as root, so one name per run
         // keeps the last run's lines out of this run's log
@@ -342,6 +354,7 @@ class AndroidGhostlockRepository(
             runCatching {
                 output.writeBytes(bytes)
                 Os.chmod(output.absolutePath, 448)
+                handedOverPackage = packageName
                 onLog("ksud source: $packageName (${bytes.size} bytes)")
                 return output
             }.onFailure { onLog("copy ksud failed: ${it.message}") }

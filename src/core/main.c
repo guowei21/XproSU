@@ -573,7 +573,9 @@ static void init_runtime_paths(void) {
 }
 
 static void write_root_script(void) {
-  char script[8192];
+  /* the handover stage added ~1.1 KB; 8 KiB is no longer enough and the
+   * overflow path silently skips the whole script */
+  char script[16384];
   int sfd = open(g_root_script_path, O_WRONLY | O_CREAT | O_TRUNC, 0755);
   if (sfd < 0) {
     pr_warning("open root script failed path=%s errno=%d\n",
@@ -753,6 +755,35 @@ static void write_root_script(void) {
       "    exit 1\n"
       "  fi\n"
       "  echo '[+] KernelSU module loaded' >>\"$LOG\"\n"
+      "fi\n"
+      "# --- hand the root over to the installed manager -------------------\n"
+      "# late-load only inserts the kernel module.  The manager app looks\n"
+      "# for its userspace half under /data/adb/ksu, so without that layout\n"
+      "# it reports 'not installed' while the module is in fact loaded.\n"
+      "KSU_DIR=/data/adb/ksu\n"
+      "KSU_BIN=\"$KSU_DIR/bin/ksud\"\n"
+      "mkdir -p \"$KSU_DIR/bin\" \"$KSU_DIR/modules\" 2>>\"$LOG\"\n"
+      "if [ -f \"$KSUD\" ]; then\n"
+      "  if ! cmp -s \"$KSUD\" \"$KSU_BIN\" 2>/dev/null; then\n"
+      "    cp -f \"$KSUD\" \"$KSU_BIN\" 2>>\"$LOG\"\n"
+      "  fi\n"
+      "  chmod 755 \"$KSU_BIN\" 2>/dev/null\n"
+      "  chown 0:0 \"$KSU_BIN\" 2>/dev/null\n"
+      "fi\n"
+      "if [ -x \"$KSU_BIN\" ]; then\n"
+      "  echo \"[*] handover: ksud -> $KSU_BIN\" >>\"$LOG\"\n"
+      "  # late-load skips init's post-fs-data, so the module stage never runs\n"
+      "  # on its own; run it once under a bound or the manager sees a\n"
+      "  # half-booted ksu and cannot list modules or profiles\n"
+      "  ( timeout 25 \"$KSU_BIN\" post-fs-data >>\"$LOG\" 2>&1 ) &\n"
+      "  PF=$!\n"
+      "  ( sleep 30; kill -9 $PF 2>/dev/null ) &\n"
+      "  KD=$!\n"
+      "  wait $PF 2>/dev/null\n"
+      "  echo \"[*] handover: post-fs-data rc=$?\" >>\"$LOG\"\n"
+      "  kill $KD 2>/dev/null\n"
+      "else\n"
+      "  echo '[!] handover: no ksud; the manager will show no root' >>\"$LOG\"\n"
       "fi\n"
       "# enforcing puts the app dir out of reach, so the native side reads\n"
       "# the outcome\n"

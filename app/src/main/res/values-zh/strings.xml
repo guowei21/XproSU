@@ -50,4 +50,7 @@
     <string name="manager_no_ksud">未检测到 libksud.so，可能无法使用</string>
     <string name="manager_show_all">显示全部应用</string>
     <string name="manager_hide_all">仅显示兼容应用</string>
+    <string name="manager_open">打开根管理器</string>
+    <string name="manager_not_found">未找到已安装的根管理器</string>
+    <string name="manager_launch_failed">无法启动该管理器</string>
 </resources>

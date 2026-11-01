@@ -52,6 +52,21 @@ class MainActivity : ComponentActivity() {
             } else {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
+            is GhostlockEffect.OpenManager -> launchManager(effect.packageName)
+        }
+    }
+
+    /**
+     * 跳到管理器；包名由仓库给出，是真正接管了 root 的那个。
+     *
+     * `getLaunchIntentForPackage` 返回 null 说明该应用没有可启动的入口
+     * （被禁用、或用户停用），这时给出明确提示而不是静默什么都不发生。
+     */
+    private fun launchManager(packageName: String) {
+        val intent = packageManager.getLaunchIntentForPackage(packageName)
+        val ok = intent != null && runCatching { startActivity(intent) }.isSuccess
+        if (!ok) {
+            Toast.makeText(this, R.string.manager_launch_failed, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -98,6 +113,7 @@ private fun GhostlockRoute(
             override fun onCloseManagerPicker() = viewModel.onCloseManagerPicker()
             override fun onManagerSelected(packageName: String?) =
                 viewModel.onManagerSelected(packageName)
+            override fun onOpenManager() = viewModel.onOpenManager()
         },
     )
 }

@@ -18,6 +18,15 @@ interface GhostlockRepository {
     /** 已安装的第三方应用，带 libksud.so 的排前面；用于选择器展示。 */
     suspend fun installedManagers(): List<ManagerScanner.Candidate>
 
+    /**
+     * 提权后该打开哪个管理器。
+     *
+     * 必须是**真正接管了 root 的那个**：手动选中项被卸载或缺 libksud.so 时
+     * [prepareKsud] 会回退到别的候选，此时跳回"用户选的那个"只会打开一个
+     * 没被授权的应用，看起来就是"跳错了管理器"。
+     */
+    fun managerToOpen(): String?
+
     /** 本机可用核心对，按最高频簇优先排序；用于 UI 下拉选择。 */
     fun availableCpuPairs(): List<CpuPair>
 

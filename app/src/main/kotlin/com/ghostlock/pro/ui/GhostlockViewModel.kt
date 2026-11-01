@@ -27,6 +27,8 @@ sealed interface GhostlockEffect {
     data class Message(val text: String) : GhostlockEffect
     data class Clipboard(val text: String) : GhostlockEffect
     data class KeepScreenAwake(val enabled: Boolean) : GhostlockEffect
+    /** 交给 [handleEffect] 启动指定包名的管理器。 */
+    data class OpenManager(val packageName: String) : GhostlockEffect
 }
 
 /**
@@ -130,6 +132,21 @@ class GhostlockViewModel(
         mutableState.update {
             it.copy(selectedManagerPackage = packageName, managerPickerVisible = false)
         }
+    }
+
+    /**
+     * 打开接管了 root 的那个管理器。
+     *
+     * 目标由 [GhostlockRepository.managerToOpen] 决定，不能用固定的包名：
+     * 所选管理器缺 libksud.so 时真正接管的是别的候选。
+     */
+    fun onOpenManager() {
+        val pkg = repository.managerToOpen()
+        if (pkg == null) {
+            send(GhostlockEffect.Toast(R.string.manager_not_found))
+            return
+        }
+        send(GhostlockEffect.OpenManager(pkg))
     }
 
     fun onRun() {
