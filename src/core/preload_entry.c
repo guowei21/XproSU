@@ -170,7 +170,11 @@ static void *gl_preload_main(void *arg) {
  *          waiter. That path wedges this device, so mcast has to be the
  *          default unless the caller explicitly asked for something else.
  *   home:  the engine writes .ghostlock_root.sh and the ksu log there. Hand it
- *          the first writable directory it can actually use. */
+ *          the first writable directory it can actually use.
+ *   cores: every crash we reproduced ran with the default 0/1 pair, and three
+ *          consecutive runs pinned to 6/7 finished with no oops at all, so the
+ *          wide cores become the default on >=8-cpu layouts. The engine still
+ *          falls back to 0/1 when this device's cpuset does not contain them. */
 static void gl_apply_default_env(void) {
   if (!getenv("GHOSTLOCK_ROUTE")) {
     const char *mcast = getenv("GHOSTLOCK_MCAST_ROUTE");
@@ -184,6 +188,11 @@ static void gl_apply_default_env(void) {
     const char *home = getenv("TMPDIR");
     if (!home || !home[0] || access(home, W_OK) != 0) home = "/data/local/tmp";
     if (access(home, W_OK) == 0) setenv("GHOSTLOCK_HOME", home, 1);
+  }
+  if (!getenv("GHOSTLOCK_CORE") && !getenv("GHOSTLOCK_CONSUMER_CORE") &&
+      sysconf(_SC_NPROCESSORS_CONF) >= 8) {
+    setenv("GHOSTLOCK_CORE", "6", 1);
+    setenv("GHOSTLOCK_CONSUMER_CORE", "7", 1);
   }
 }
 
