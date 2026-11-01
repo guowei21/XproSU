@@ -29,6 +29,26 @@ static void *gl_preload_main(void *arg) {
   return NULL;
 }
 
+/* KSuRoot ships payloads without any environment handshake: the manager only
+ * sets LD_PRELOAD. Two defaults therefore have to come from here.
+ *
+ *   route: the engine picks TCP whenever the target kernel reports a compact
+ *          waiter. That path wedges this device, so mcast has to be the
+ *          default unless the caller explicitly asked for something else.
+ *   home:  the engine writes .ghostlock_root.sh and the ksu log there. Hand it
+ *          the first writable directory it can actually use. */
+static void gl_apply_default_env(void) {
+  if (!getenv("GHOSTLOCK_ROUTE")) {
+    const char *mcast = getenv("GHOSTLOCK_MCAST_ROUTE");
+    if (!mcast || !mcast[0]) setenv("GHOSTLOCK_ROUTE", "mcast", 1);
+  }
+  if (!getenv("GHOSTLOCK_HOME")) {
+    const char *home = getenv("TMPDIR");
+    if (!home || !home[0] || access(home, W_OK) != 0) home = "/data/local/tmp";
+    if (access(home, W_OK) == 0) setenv("GHOSTLOCK_HOME", home, 1);
+  }
+}
+
 static int started_by_preload(void) {
   const char *preload = getenv("LD_PRELOAD");
   if (!preload || !preload[0]) return 0;
@@ -40,6 +60,7 @@ __attribute__((constructor)) static void gl_preload_ctor(void) {
   const char *guard = getenv("GHOSTLOCK_PRELOAD_ACTIVE");
   if (guard && guard[0] == '1') return;
   setenv("GHOSTLOCK_PRELOAD_ACTIVE", "1", 1);
+  gl_apply_default_env();
 
   pthread_attr_t attr;
   int have_attr = pthread_attr_init(&attr) == 0;

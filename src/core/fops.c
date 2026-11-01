@@ -51,6 +51,24 @@ static int pre_puncher_started;
 
 static void *tcp_punch_thread(void *arg);
 
+/* Debug knobs (env-gated, no effect on a normal run):
+ *   GHOSTLOCK_TCP_TRACE=1      per-step prints inside the zerocopy loop, used
+ *                              to find the exact syscall that faults.
+ *   GHOSTLOCK_TCP_ATTEMPTS=N   cap the loop so a faulting step is hit once. */
+static int tcp_debug_on(const char *name) {
+  const char *s = getenv(name);
+  return s && s[0] && s[0] != '0';
+}
+
+static int tcp_attempt_cap(void) {
+  const char *s = getenv("GHOSTLOCK_TCP_ATTEMPTS");
+  if (!s || !s[0]) return TCP_ROUTE_ATTEMPTS;
+  char *end = NULL;
+  long v = strtol(s, &end, 0);
+  if (end == s || *end || v <= 0 || v > TCP_ROUTE_ATTEMPTS) return TCP_ROUTE_ATTEMPTS;
+  return (int)v;
+}
+
 int observe_preinit(void) {
   if (pre_client_fd >= 0) {
     return 0;
@@ -411,9 +429,16 @@ void do_tcp_fake_lock_route(void) {
   char sendbuf[64];
   memset(sendbuf, 0x33, sizeof(sendbuf));
 
-  for (int i = 1; i <= TCP_ROUTE_ATTEMPTS && !route_ok; i++) {
+  int trace = tcp_debug_on("GHOSTLOCK_TCP_TRACE");
+  int attempt_cap = tcp_attempt_cap();
+  if (trace) {
+    pr_info("tcp trace: page=%016zx map=%p page_size=%zu cap=%d\n",
+            page_base, map, page_size, attempt_cap);
+  }
+  for (int i = 1; i <= attempt_cap && !route_ok; i++) {
     int calls_before = atomic_load(&consumer_calls);
     int success_before = atomic_load(&consumer_success);
+    if (trace) pr_info("tcp trace %d: pre-send\n", i);
     (void)send(server_fd, sendbuf, sizeof(sendbuf), MSG_DONTWAIT);
     while (atomic_load(&tcp_punch_phase)) {
       sched_yield();
