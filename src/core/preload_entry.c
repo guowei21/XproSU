@@ -18,15 +18,24 @@
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <pthread.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 extern int run_exploit(int argc, char **argv);
 
+static pthread_mutex_t g_done_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_done_cv = PTHREAD_COND_INITIALIZER;
+static int g_done = 0;
+
 static void *gl_preload_main(void *arg) {
   (void)arg;
   run_exploit(0, NULL);
+  pthread_mutex_lock(&g_done_lock);
+  g_done = 1;
+  pthread_cond_broadcast(&g_done_cv);
+  pthread_mutex_unlock(&g_done_lock);
   return NULL;
 }
 
@@ -90,12 +99,16 @@ __attribute__((constructor)) static void gl_preload_ctor(void) {
   }
   if (started_by_preload()) {
     /* The helper must not exit before the engine is done, but it must also
-     * never hang forever: give the run a bounded budget and then let the host
+     * never hang forever: wait on a bounded budget and then let the host
      * continue with whatever state the engine reached. */
-    for (int i = 0; i < 1800; i++) {
-      if (pthread_tryjoin_np(th, NULL) == 0) return;
-      usleep(100000);
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += 240;
+    pthread_mutex_lock(&g_done_lock);
+    while (!g_done) {
+      if (pthread_cond_timedwait(&g_done_cv, &g_done_lock, &ts) != 0) break;
     }
+    pthread_mutex_unlock(&g_done_lock);
     pthread_detach(th);
   } else {
     pthread_detach(th);
