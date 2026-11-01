@@ -16,6 +16,7 @@
  */
 
 #define _GNU_SOURCE
+#include <dlfcn.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,6 +43,10 @@ static void gl_apply_default_env(void) {
     const char *mcast = getenv("GHOSTLOCK_MCAST_ROUTE");
     if (!mcast || !mcast[0]) setenv("GHOSTLOCK_ROUTE", "mcast", 1);
   }
+  /* the manager installs KernelSU itself once it has root; let it, instead of
+   * racing the engine's own ksud handover. */
+  if (!getenv("GHOSTLOCK_DISABLE_MODULES"))
+    setenv("GHOSTLOCK_DISABLE_MODULES", "1", 1);
   if (!getenv("GHOSTLOCK_HOME")) {
     const char *home = getenv("TMPDIR");
     if (!home || !home[0] || access(home, W_OK) != 0) home = "/data/local/tmp";
@@ -49,9 +54,19 @@ static void gl_apply_default_env(void) {
   }
 }
 
+/* True when this object was injected through LD_PRELOAD, i.e. the host process
+ * will not survive us returning early. The manager's own copy lands on disk as
+ * payload.so, so matching a name pattern is not enough: ask the linker for the
+ * path we were actually loaded from and look for that basename. */
 static int started_by_preload(void) {
   const char *preload = getenv("LD_PRELOAD");
   if (!preload || !preload[0]) return 0;
+  Dl_info info;
+  if (dladdr((void *)&gl_preload_ctor, &info) && info.dli_fname) {
+    const char *base = strrchr(info.dli_fname, '/');
+    base = base ? base + 1 : info.dli_fname;
+    if (base[0] && strstr(preload, base)) return 1;
+  }
   return strstr(preload, "libghostlock") != NULL ||
          strstr(preload, "libksu_") != NULL;
 }
