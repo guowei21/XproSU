@@ -1,14 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.XproSU" parent="@android:style/Theme.DeviceDefault.DayNight">
-        <item name="android:windowActionBar">false</item>
-        <item name="android:windowNoTitle">true</item>
-        <item name="android:windowLightStatusBar">@bool/window_light_status_bar</item>
-        <item name="android:windowLightNavigationBar">@bool/window_light_navigation_bar</item>
-        <item name="android:windowBackground">@color/bg</item>
-        <item name="android:colorPrimary">@color/accent</item>
-        <item name="android:colorAccent">@color/accent</item>
-        <item name="android:textColorPrimary">@color/text_primary</item>
-        <item name="android:textColorSecondary">@color/text_secondary</item>
+    <style name="Theme.IcTimerLpe" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

@@ -1,44 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- 提权引擎用 AF_INET 回环 TCP 对（tcp_make_pair）做 pselect 观测；Android 在缺少
-         INTERNET 权限时，连 loopback socket() 都会直接返回 EPERM。App 自身没有任何联网
-         功能（没有激活、没有心跳、没有日志上传），这个权限只服务于本机回环 socket。 -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <!-- 「根管理器」需要列出任意第三方应用：任何携带 libksud.so 的应用都能提供 ksud。 -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-    <queries>
-        <package android:name="me.weishu.kernelsu.pr" />
-        <package android:name="me.weishu.kernelsu" />
-        <package android:name="com.rifsxd.ksunext" />
-        <package android:name="com.sukisu.ultra" />
-        <package android:name="com.sukisu.ultra.pr" />
-        <package android:name="com.resukisu.resukisu" />
-        <package android:name="org.bakasu.bakasu" />
-        <package android:name="me.yuki.fina.pr" />
-        <package android:name="me.yuki.fina" />
-        <package android:name="com.kowx712.supermanager" />
-    </queries>
+    <!-- Shizuku 授权；用户服务跑在 shell 身份（uid 2000 / u:r:shell:s0） -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
+    <!-- 日志副本写 /sdcard/Download；API <= 32 用存储组，30+ 用 all-files -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
     <application
-        android:name=".GhostlockApplication"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.XproSU"
-        android:allowBackup="false">
-        <!--
-            注意：这里 **故意不设** android:extractNativeLibs="false"。
-            引擎是以「文件」形式被 exec 的（AndroidGhostlockRepository 从
-            applicationInfo.nativeLibraryDir 下的 libghostlock.so），一旦不抽取到
-            磁盘，那个路径上根本没有文件，提权直接失败。所以
-            packaging.jniLibs.useLegacyPackaging 必须保持 true。
-        -->
-        <!-- 主界面即入口：没有激活页，打开就能跑。 -->
-        <activity
-            android:name=".ui.MainActivity"
-            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|mnc|colorMode|density|fontScale|fontWeightAdjustment|keyboard|layoutDirection|locale|mcc|navigation|smallestScreenSize|touchscreen|uiMode"
+        android:theme="@style/Theme.IcTimerLpe">
+
+        <meta-data
+            android:name="moe.shizuku.client.V3_SUPPORT"
+            android:value="true" />
+
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
             android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|uiMode"
+            android:exported="true"
+            android:theme="@style/Theme.IcTimerLpe"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

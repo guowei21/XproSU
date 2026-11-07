@@ -1,149 +1,87 @@
-# XproSU 1.1（无授权 · 本地偏移版）
+# XproSu
 
-> **定位**：XproSU 1.1 的完整源码工程，**不含任何授权/联网校验**：没有激活页、没有卡密、
-> 没有心跳、没有服务端。偏移表随 APK 分发，在设备上本地解密后交给引擎。
->
-> **引擎**：原版 ghostlock（CVE-2026-43499 futex PI UAF 提权），`src/` 逐文件保留，
-> 只把偏移的来源换成随包加密资产。
->
-> **上游基线**：`YuKongA/ghostlock-app` 提交 `50d2b72`（2026-09-12，
-> `pselect: fix compact route on 6.1 (#127)`）。源码还原依据见
-> [`RECONSTRUCTION.md`](RECONSTRUCTION.md)。
+基于上游 `kzktor/ic-timer-lpe`（分支 `refactor-98260`，0.12.31）补齐的 Android 工程。
+exploit core 与运行脚本保留上游实现，应用壳重写为 Kotlin + Jetpack Compose。
 
----
-
-## 1. 目录结构
-
-| 路径 | 内容 |
-|---|---|
-| `app/` | Android 应用（Kotlin + Compose + Miuix） |
-| `app/src/main/assets/offsets.enc` | **随包偏移表**：AES-256-GCM 密封的 `offsets.json` |
-| `src/` | 原版 ghostlock 引擎（`main.c` / `fops.c` / `util.c` / `offsets_json.c` + 内建表） |
-| `src/kernels/offsets.h` | `known_offsets[]`：57 / 124 / 145 三条内建条目（导入失败时的兜底） |
-| `Makefile` | C 引擎构建（gradle 走 `buildGhostlockNative` → `prepareGhostlockJniLibs`） |
-| `tools/pack_offsets_local.py` | 把偏移 JSON 密封成 `assets/offsets.enc`（打包期工具） |
-| `docs/private-deploy/` | 私有化适配资料：逐符号偏移提取、可复现构建、重打包签名、真机核验 |
-| `server/gl-license/` | **历史遗留**：旧卡密授权服务（Python 标准库）。本版 App 不再调用它 |
-| `RECONSTRUCTION.md` / `ENCRYPTION-PLAN.md` | 源码还原说明 / 旧的加密方案记录（历史文档） |
-
----
-
-## 2. 支持的内核（3 条内建表）
-
-| release（`uname -r`） | 设备 |
-|---|---|
-| `6.1.57-android14-11-maybe-dirty` | vivo PD2324（早期固件） |
-| `6.1.124-android14-11-maybe-dirty` | vivo PD2324 / V2324A（MT6989） |
-| `6.1.145-android14-11-maybe-dirty` | vivo V2324A / iQOO 同代（Dimensity 9300） |
-
-引擎先按 `uname -r` 找导入表，找不到再退回 `known_offsets[]`；两条都没有就报
-`no offsets for kernel` 退出，不会拿错表硬跑。
-
----
-
-## 3. 偏移数据怎么走（本地解密）
-
-```
-assets/offsets.enc            AES-256-GCM(json, aad="XSO1")
-        │                     密钥 = SHA-256("XproSU/local-offsets/v1")
-        ▼  LocalOffsets.decrypt()             （运行时，设备本地）
-$filesDir/offsets.json        引擎的导入格式（数组，每项一个 release）
-        ▼  load_offsets_json()
-active_offsets               命中 release 的条目；缺失字段沿用内建表
-        ▼
-W1 → vr.ko → W2 → W3 → root
-```
-
-- **没有服务端**：密钥推导在 App 里，所以这是**混淆**而不是保密 —— 拿到 APK 的人
-  可以复现这张表。要「APK 里拿不到表」就必须有服务端持有密钥，而这正是本版去掉的东西。
-- **每次运行前重写**：解出来的表只有 5 KB，重写成本远低于「缓存被截断后静默退回
-  内建表」的风险。
-- **内建表仍在**：`known_offsets[]` 是兜底，也是 103 之前真机跑通的那一份。
-
-重新生成资产（改过偏移 JSON 之后）：
-
-```powershell
-python tools\pack_offsets_local.py app\src\main\assets\offsets.enc `
-    docs\private-deploy\offsets\offsets-57+124+145-combined.json
-```
-
----
-
-## 4. App 行为
-
-- **无授权**：启动不弹激活框，不发 `/api/session`、不发心跳、前台不做在线核对；
-  运行按钮只取决于内核是否在支持列表里。
-- **日志常显**：Release 也显示完整运行日志与终端卡片；「维护 → 运行日志 →
-  复制到剪贴板」可以把落盘的那份取出来（每行 fsync，卡死重启后仍在）。
-- **不联网**：`AndroidManifest.xml` 不申请 `INTERNET`。
-- **W1 路由可切换**：默认 `mcast`（真机验证过的路线），打开「TCP 路由」走 socket。
-  两条路都会在日志里打印 `route=…` 和 `xxx route start`。
-- **无超时/看门狗**：引擎的 futex 竞速没有人为截止时间 —— 加超时会把本来能完成的
-  路线提前打断（103 的失败原因）。
-
----
-
-## 5. 构建
-
-前置：JDK 21、Android SDK、NDK（或云端 Actions 自带的 ONDK）。
-
-```properties
-# local.properties（不入库）
-sdk.dir=<Android SDK>
-KEYSTORE_PATH=<release keystore>
-KEYSTORE_PASS=<...>
-KEY_ALIAS=<...>
-KEY_PASSWORD=<...>
-```
-
-```powershell
-$env:JAVA_HOME    = '<JDK>'
-$env:ANDROID_HOME = '<Android SDK>'
-
-.\gradlew.bat assembleRelease --no-daemon
-```
-
-产物：`app/build/outputs/apk/release/XproSU-v1.1(107)-arm64-v8a-release.apk`
-
-没有正式 keystore 时 release **直接构建失败**，不会回退到 debug 签名 ——
-debug 证书是公开的，任何人都能签一个同名包覆盖安装并继承 `/data/data` 下的数据。
-
-云端：`.github/workflows/build.yml`，`main` 的 push 或手动 dispatch 均可。
-
----
-
-## 6. 与上游 `50d2b72` 的差异
-
-1. `app/build.gradle.kts` —— `versionCode` 固定为手工值（当前 `107`），
-   因为无 `.git` 目录构建时 `git rev-list --count HEAD` 会回退成 `1`。
-2. `app/.../data/AndroidGhostlockRepository.kt` —— 运行前解密 `assets/offsets.enc`；
-   路由由设置页控制（默认 `mcast`）。
-3. **授权层整体移除**：`license/` 包（卡密、指纹、GLT2 容器、心跳、日志上传）
-   已删除；`BuildConfig.LICENSE_BASE_URL`、network security config、`INTERNET`
-   权限一并去掉。
-4. **OTA / boot.img 解析**（上游更早版本的功能）不在本工程内。
-5. 包名 `com.ghostlock.app` → `com.ghostlock.pro`；UI 重构为 Miuix 卡片式。
-
----
-
-## 7. 红线
-
-1. **签名密钥固定后再分发** —— 换签名要卸载重装，`/data/data` 里的日志与解出来的
-   表都会丢。
-2. **不要给引擎加人为超时** —— 这套竞速在慢机上需要的时间是不确定的，任何
-   deadline/看门狗都会把「本来能成功」变成「失败」（`docs/private-deploy/` 有对照记录）。
-3. **同一开机周期不要二跑** —— race 失败会留下悬空 PI 节点。
-4. `src/kernels/offsets.h` 里 `task_cred` **必须显式给值** —— 缺键会回落到 6.6 的
-   `0x900`，而它恰等于 6.1 的 `task_seccomp`，会把 root cred 写进 seccomp 字段。
-5. **改 `src/` 就做 A/B** —— 时序敏感，任何重排都要与已验证的引擎逐行比对。
-
----
-
-## 8. 上游参考
+## 当前版本
 
 | 项 | 值 |
 |---|---|
-| 仓库 | `https://github.com/YuKongA/ghostlock-app` |
-| 基线提交 | `50d2b72`（2026-09-12） |
-| 为什么不用上游 `main` | `main` 已重构成 C++ 世代（`src/core/race/`、`route/`、`session/`），app 层只设 2 个环境变量、配置走 JSON profile —— 与本引擎接口不兼容 |
-| 本工程与引擎的契约 | `exec` 调用 + `GHOSTLOCK_*` 环境变量 + `GHOSTLOCK_HOME/offsets.json` |
+| versionName / versionCode | 0.16.2 / 18 |
+| 包名 | `com.xprosu`（debug：`com.xprosu.dev`） |
+| 应用名 | XproSu |
+| minSdk / targetSdk / compileSdk | 33 / 35 / 35 |
+| 构建 | Gradle 8.9 · AGP 8.7.3 · Kotlin 2.0.21 · Compose BOM 2024.10.01 |
+| 原生载荷 | `app/src/main/assets/ic-timer`，NDK r29 / API 29，2,383,880 B |
+| 载荷 SHA-256 | `21f0bc3b6a6e72ba…`（完整值见发布说明） |
+| 真机验证 | vivo V2324A / `PD2324C_A_16.2.13.1.W10`，表 `ic_pd2324j_links` |
+
+## 功能
+
+- Shizuku shell 用户服务（uid 2000 / `u:r:shell:s0`），应用不直接碰 `/data/local/tmp`
+- 12 阶段进度：按 core 日志锚点解析，不需要改 native
+- KSU 管理器自动检测：已知包名优先，未命中按关键字扫描并用 `resolve-activity` 验证
+- 交接时通过 `IC_KSU_PKG` 把管理器包名传给 core，用 `monkey` 冷启动（兼容随机 Activity 别名）
+- 日志为首页二级抽屉，诊断并入同一面板；不再向 `/sdcard/Download` 写副本
+- 运行结束自动清理 `/data/local/tmp` 的临时文件；**不删除 `/data/adb/ksu` 内任何内容**
+- ksud 暂存放在 `/data/local/tmp/ksud-h*`，由自动清理回收
+
+## 目录
+
+```
+app/                        Android 壳
+  src/main/aidl/com/xprosu/ IIcService.aidl（8 个方法，签名与上游一致）
+  src/main/assets/          run_core.sh / ksu_handoff.sh / safemode.sh
+                            cleanup_tmp.sh / manual.md / ic-timer
+  src/main/java/com/xprosu/ MainActivity.kt / MainViewModel.kt / IcService.java
+                            core/Stages.kt（12 阶段锚点）
+                            ui/{AppRoot,HomeScreen,LogScreen,Theme}.kt
+core/                       exploit 源码（MIT，molanp）
+scripts/build-core.sh       NDK 编 core → assets/ic-timer
+scripts/build-apk.sh        一条命令出 debug APK
+```
+
+## 构建
+
+```sh
+# 1) core（NDK r27+，目标 API 29；API 24 的 TLS 对齐会被 bionic 拒绝）
+export ANDROID_NDK_HOME=/opt/android-sdk/ndk/29.0.14206865
+./scripts/build-core.sh
+
+# 2) APK
+./scripts/build-apk.sh                 # debug
+./gradlew assembleRelease \
+  -Pandroid.aapt2FromMavenOverride=/opt/android-sdk/build-tools/35.0.2/aapt2
+```
+
+aarch64 主机必须用 `android.aapt2FromMavenOverride` 指向 arm64 的 aapt2；
+x86_64 主机装好 Google build-tools 后可省略。
+
+release 默认回退 debug 签名；要正式签名，把 `keystore.properties.example`
+复制成 `keystore.properties` 并填 keystore（已 gitignore）。
+
+## 运行前提
+
+- 每次完整运行前重启手机（上一轮的 slab 状态会污染 fake-cred 命中率）
+- Shizuku 用无线调试 / ADB 启动，不要用 root 启动
+- 接管 KSU 前先装好对应管理器 APK，模块由 late-load 加载
+- 只支持 KernelSU 系（KernelSU / KSU-Next / SukiSU / BakaSU / ReSukiSU /
+  SakiSU / FinaSU / 7kimisu / vivoKSU）；Magisk、APatch 不走这条链路
+
+## 与上游的差异
+
+- `core/` 与 4 个运行脚本来自上游，脚本未改逻辑
+- `core/timer98260.c` 唯一改动：KSU 收尾启动管理器时读 `IC_KSU_PKG`，
+  有值用 `monkey -p <pkg>`，无值保持原来的 `am start -n <KSU_PKG>/.ui.MainActivity`
+- 其余全部是应用壳、构建工程与文档
+
+## 已知限制
+
+- release 默认使用 debug 签名
+- 多用户 / 工作资料下的管理器按 user 0 处理
+- 运行后残留的 root `ic-timer` 进程按上游手册不能 `kill -9`，只能重启
+
+## 许可
+
+core 为 MIT（Copyright (c) 2026 molanp，见 `core/LICENSE.molanp`）。
+上游仓库根目录未附 APK 侧代码的许可证，对外分发前先与作者确认。
