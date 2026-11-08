@@ -33,7 +33,8 @@ say() { echo "$TAG $*"; }
 
 KNOWN="me.weishu.kernelsu com.sukisu.ultra org.bakasu.bakasu \
 com.resukisu.resukisu com.sakisu.sakisu com.sevenk.core \
-com.sevenkimimasy.love me.inkdye.vivoksu com.rifsxd.ksunext me.yuki.fina"
+com.sevenkimimasy.love me.inkdye.vivoksu com.rifsxd.ksunext me.yuki.fina \
+com.kowx712.kowsupro"
 
 KERNEL=$(uname -r 2>/dev/null)
 if [ -z "$KMI" ]; then

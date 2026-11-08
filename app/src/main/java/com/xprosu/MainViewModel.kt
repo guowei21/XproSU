@@ -45,7 +45,7 @@ data class AppState(
 val KSU_NAMES = listOf(
     "自动检测", "KernelSU", "KernelSU-Next", "SukiSU Ultra",
     "BakaSU", "ReSukiSU (旧包名)", "SakiSU", "FinaSU",
-    "7kimisu", "7kimisu (备用包名)", "vivoKSU",
+    "7kimisu", "7kimisu (备用包名)", "vivoKSU", "KowSU Pro",
 )
 
 // 与 ksu_handoff.sh 的 KNOWN 列表保持一致；脚本优先，应用只做检测和传参。
@@ -54,6 +54,7 @@ val KSU_PACKAGES = listOf(
     "org.bakasu.bakasu", "com.resukisu.resukisu",
     "com.sakisu.sakisu", "me.yuki.fina", "com.sevenk.core",
     "com.sevenkimimasy.love", "me.inkdye.vivoksu",
+    "com.kowx712.kowsupro",
 )
 
 private const val TMP = "/data/local/tmp/"
@@ -455,7 +456,7 @@ private class RunStreamDone : Exception()
             .firstOrNull { out.contains("package:" + it) }
         if (known != null) return known
 
-        val keys = listOf("kernelsu", "sukisu", "resukisu", "bakasu", "sakisu", "vivoksu", "ksu")
+        val keys = listOf("kernelsu", "sukisu", "resukisu", "bakasu", "sakisu", "vivoksu", "kowsu", "ksu")
         val candidates = out.lineSequence()
             .map { it.removePrefix("package:").trim() }
             .filter { p -> p.isNotEmpty() && keys.any { p.contains(it, ignoreCase = true) } }
