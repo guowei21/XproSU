@@ -13,6 +13,11 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 object AdbSessionBus {
 
+    /** 状态迁移统一落 logcat（标签 XproSU），连不上时能直接看出卡在哪一步。 */
+    private fun log(phase: Phase, message: String?) {
+        android.util.Log.i("XproSU", "link " + phase + (message?.let { " | " + it } ?: ""))
+    }
+
     enum class Phase {
         IDLE,          // 未开始
         SCANNING,      // 正在等用户在设置里发起配对
@@ -37,31 +42,37 @@ object AdbSessionBus {
     @JvmStatic
     fun scanning() {
         _state.value = State(Phase.SCANNING, -1, "等待系统广播配对端口")
+        log(Phase.SCANNING, _state.value.message)
     }
 
     @JvmStatic
     fun codeRequired(port: Int) {
         _state.value = State(Phase.CODE_REQUIRED, port, "已发现配对端口 $port")
+        log(Phase.CODE_REQUIRED, _state.value.message)
     }
 
     @JvmStatic
     fun pairing(port: Int) {
         _state.value = State(Phase.PAIRING, port, "正在配对")
+        log(Phase.PAIRING, _state.value.message)
     }
 
     @JvmStatic
     fun paired() {
         _state.value = State(Phase.PAIRED, _state.value.port, "配对成功，等待会话端口")
+        log(Phase.PAIRED, _state.value.message)
     }
 
     @JvmStatic
     fun connecting(port: Int) {
         _state.value = State(Phase.CONNECTING, port, "正在连接 $port")
+        log(Phase.CONNECTING, _state.value.message)
     }
 
     @JvmStatic
     fun connected(port: Int) {
         _state.value = State(Phase.CONNECTED, port, "已连接，端口 $port")
+        log(Phase.CONNECTED, _state.value.message)
     }
 
     /** adbd 回了 "ADB pairing is required"：密钥没被授信，必须走一次配对。 */
@@ -72,15 +83,18 @@ object AdbSessionBus {
             -1,
             message ?: "adbd 还不认本机密钥，需要配对一次"
         )
+        log(Phase.NEEDS_PAIRING, _state.value.message)
     }
 
     @JvmStatic
     fun error(message: String?) {
         _state.value = State(Phase.ERROR, _state.value.port, message ?: "未知错误")
+        android.util.Log.w("XproSU", "link ERROR | " + (_state.value.message ?: ""))
     }
 
     @JvmStatic
     fun reset() {
         _state.value = State()
+        log(Phase.IDLE, null)
     }
 }

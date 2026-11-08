@@ -7,7 +7,7 @@ exploit core 与运行脚本保留上游实现，应用壳重写为 Kotlin + Jet
 
 | 项 | 值 |
 |---|---|
-| versionName / versionCode | 0.18.0 / 20 |
+| versionName / versionCode | 0.18.1 / 21 |
 | 包名 | `com.xprosu`（debug：`com.xprosu.dev`） |
 | 应用名 | XproSu |
 | minSdk / targetSdk / compileSdk | 33 / 35 / 35 |

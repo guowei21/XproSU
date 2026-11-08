@@ -1,5 +1,9 @@
 # 变更记录
 
+## 0.18.1
+- 连接链路补日志：connect() 的已存端口、connect(saved) 返回值、mDNS 发现，以及 AdbSessionBus 每次状态迁移
+- 重启后无线调试未开（service.adb.tls.port 为空）时，logcat 能直接看出卡在「没有可连端口」
+
 ## 0.18.0
 - 修复「载荷还在重试就被判挂起」：只有 park_forever 的 `reboot before rerun` 才算终态，
   `plant burst missed; holding zombie` 只是过程日志

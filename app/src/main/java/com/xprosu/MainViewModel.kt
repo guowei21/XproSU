@@ -120,6 +120,10 @@ private class RunStreamDone : Exception()
 
     /** 点"连接"：先试已保存的会话端口，失败再去发现当前无线调试端口（不要求重新配对）。 */
     fun connect() {
+        android.util.Log.i(
+            "XproSU",
+            "connect() phase=" + _state.value.link.phase + " connected=" + isConnected()
+        )
         if (_state.value.link.phase == AdbSessionBus.Phase.NEEDS_PAIRING) {
             // 配对发现已经在跑了，再连一次只会再被拒
             toast("去设置 › 无线调试 › 使用配对码配对设备，再从通知栏输入 6 位码")
@@ -132,10 +136,13 @@ private class RunStreamDone : Exception()
         val saved = getApplication<Application>()
             .getSharedPreferences(PREFS, Application.MODE_PRIVATE)
             .getInt(PREF_PORT, -1)
+        android.util.Log.i("XproSU", "connect() savedPort=" + saved)
         if (saved > 0) {
             viewModelScope.launch(Dispatchers.IO) {
                 val ok = runCatching { AdbBridge.get(getApplication()).connect(saved) }
+                    .onFailure { android.util.Log.w("XproSU", "connect(saved) 异常", it) }
                     .getOrDefault(false)
+                android.util.Log.i("XproSU", "connect(saved=" + saved + ") -> " + ok)
                 if (ok) {
                     AdbSessionBus.connected(saved)
                     loadIdentity()
@@ -153,6 +160,7 @@ private class RunStreamDone : Exception()
      * 所以直接按 mDNS 广播的会话端口连就行，用户不用再要一次配对码。
      */
     fun discoverAndConnect() {
+        android.util.Log.i("XproSU", "discoverAndConnect() 走 mDNS 发现会话端口")
         AdbSessionBus.scanning()
         val intent = android.content.Intent(
             getApplication(), AdbPairingService::class.java
@@ -166,6 +174,7 @@ private class RunStreamDone : Exception()
 
     /** 拉起前台配对服务，等系统广播配对端口。 */
     fun startPairing() {
+        android.util.Log.i("XproSU", "startPairing() 走 mDNS 发现配对端口")
         AdbSessionBus.scanning()
         val intent = android.content.Intent(
             getApplication(), AdbPairingService::class.java
