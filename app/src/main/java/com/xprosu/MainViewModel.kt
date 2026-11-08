@@ -81,8 +81,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val lineBuffer = StringBuilder()
     private val tracker = StageTracker()
     private var exitSeen: Int? = null
-/** 载荷打出 "holding zombie"：内核里留着未回收的 timer 节点，只能重启后重试。 */
-private var zombieHeld = false
+    /**
+     * 终态挂起：core 的 park_forever 打出 "reboot before rerun"，进程停在 pause() 不退出。
+     * 注意 plant burst miss、reap 非 SIGKILL 时也会打 "holding zombie"，但那只是过程日志，
+     * 载荷随后会继续重试（core/timer98260.c:1985、:2039 对 :1033）。
+     */
+    private var zombieHeld = false
+    /** 载荷打出 "failure condition"：有 plant 没被回收。本轮可能仍提到 root，但建议重启。 */
+    private var plantMissed = false
 
 /** 日志流提前收尾的内部信号（不是错误）。 */
 private class RunStreamDone : Exception()
@@ -263,6 +269,7 @@ private class RunStreamDone : Exception()
             tracker.reset()
             exitSeen = null
             zombieHeld = false
+            plantMissed = false
             pendingExit = null
             exitAtMs = 0L
         }
@@ -317,25 +324,14 @@ private class RunStreamDone : Exception()
                 // 管理器由应用侧退出后再找。
                 env["IC_KSU_PKG"] = managerPkg.ifEmpty { "-" }
 
-                // exploit 的 stdout/stderr 直接落盘（不经 tee），并且**运行期间不读日志**。
-                //
-                // 这是无线 adb 传输层的固有开销：tail -f 每拿到一行日志，adbd 都要把
-                // 这段字节写进 shell 流的 socket，内核要为此分配 skb/pipe 页。而 exploit
-                // 的关键窗口（plant 的 burst）正是"释放一个 timer slab 页，等子进程把它
-                // 重新拿回来"——任何并发分配都可能把这一页抢走。PC 端手动跑没有这个
-                // 读取者，所以 12 个 plant 全中（3–56ms）；App 内凡是开着 tail 流的轮次
-                // 就会零星出现 burst hit=0 after 15000ms。
-                //
-                // 现在改成：起载荷 → 只用 kill -0 轮询它活着（不产生任何 socket 读）
-                // → 进程退出后再把整份日志读回来。日志实时性让位于命中率。
+                // 载荷 stdout/stderr 直接落盘（不经 tee：tee 会在进程被杀时把缓冲区
+                // 里的最后 ~2 KB 一起丢掉），同一个 shell 流里再 tail -f 这份文件。
+                // 流不关，adbd 就不会收掉这个进程组——这本身就是保活机制。
+                // 载荷内部用 setsid 脱离进程组，所以即便流断了它也继续跑。
                 AdbTransport.execOrThrow(": > " + quote(logFile))
                 logPath = logFile
 
                 val envPart = env.entries.joinToString(" ") { it.key + "=" + quote(it.value) }
-                // done 文件用来判断载荷结束：轮询一个文件的"有没有"不产生任何 socket
-                // 输出，也不会像 tail 那样把日志内容一路搬进 adbd 的写路径。
-                val done = TMP + "ic-done-a" + stamp
-                AdbTransport.execOrThrow("rm -f " + quote(done))
                 val runCmd = "cd " + quote(TMP) + " && ( env " + envPart +
                     " setsid /system/bin/sh " + quote(script) +
                     " >> " + quote(logFile) + " 2>&1 < /dev/null & ) ; " +
@@ -348,12 +344,12 @@ private class RunStreamDone : Exception()
                 }
                 appendLog(
                     "[run] 启动 方案: run_core.sh  KSU: " + label +
-                        "\n[run] 运行期不读日志（避免传输层分配抢页），结束后一次性读回" +
+                        "\n[run] 载荷输出直写日志，同一条流里 tail -f 实时回显" +
                         "\n[run] bin=" + bin + "\n[run] log=" + logFile
                 )
                 attachRunStream(runCmd)
-                // 流结束（tail 读完）后按退出码收尾。日志是一次性整段读回的，收尾顺序
-                // 可能与流的结束交错，所以这里不依赖 running 标志，只看 [core] exit。
+                // 流结束（tail 读完）后按退出码收尾。这里不依赖 running 标志，只看
+                // [core] exit / 终态挂起 / 流提前断掉三种情况。
                 val seen = exitSeen
                 when {
                     seen != null -> {
@@ -361,7 +357,7 @@ private class RunStreamDone : Exception()
                         finish(failed = seen != 0)
                     }
                     zombieHeld -> {
-                        appendLog("[adb] 运行流已结束（载荷 holding zombie）")
+                        appendLog("[adb] 运行流已结束（载荷已挂起，需重启后再试）")
                         if (_state.value.running) finish(failed = true)
                     }
                     else -> {
@@ -369,10 +365,14 @@ private class RunStreamDone : Exception()
                         if (_state.value.running) finish(failed = true)
                     }
                 }
+                // 失败轮次也要清临时文件：挂起的载荷还持有自己的 inode，unlink 不会
+                // 让它 SIGBUS，只是把目录项抹掉。成功路径由 handleCoreExit 收尾时清理。
+                if (seen != 0) runCatching { autoCleanup() }
             } catch (t: Throwable) {
                 android.util.Log.w("XproSU", "run() 失败", t)
                 appendLog("[run] 失败: " + t)
                 finish(failed = true)
+                runCatching { autoCleanup() }
             }
         }
     }
@@ -592,6 +592,10 @@ private class RunStreamDone : Exception()
         val script = TMP + "ic-clean-a" + stamp + ".sh"
         pushAsset("cleanup_tmp.sh", script)
         val out = AdbTransport.exec("sh " + script + " 2>&1", timeoutMs = 60_000).output
+        val procs = Regex("procs=(\\d+)").find(out)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        if (procs > 0) {
+            appendLog("[app] 仍有 " + procs + " 个载荷进程驻留（挂起态，故意不回收），只能重启清除")
+        }
         return Regex("cleaned=(\\d+)").find(out)?.groupValues?.get(1)?.toIntOrNull() ?: 0
     }
 
@@ -676,7 +680,11 @@ private class RunStreamDone : Exception()
                 val line = lineBuffer.substring(0, idx)
                 lineBuffer.delete(0, idx + 1)
                 tracker.feed(line)
-                if (line.contains("holding zombie")) zombieHeld = true
+                // 只有 park_forever 的结句才是终态（core/timer98260.c:1033）。
+                if (line.contains("reboot before rerun")) zombieHeld = true
+                // 这两个是 core 跑完后的自评（core/timer98260.c:3547、:3549）。
+                if (line.contains("failure condition:")) plantMissed = true
+                if (line.contains("success condition met")) plantMissed = false
                 if (line.contains("[core] exit=")) {
                     exited = line.substringAfter("[core] exit=").trim().toIntOrNull()
                     exitSeen = exited
@@ -704,6 +712,13 @@ private class RunStreamDone : Exception()
             else -> "运行结束（exit=" + code + "），见日志"
         }
         if (failHint != null) _state.update { it.copy(toast = failHint) }
+        if (code == 0 && plantMissed) {
+            appendLog(
+                "[adb] 警告：载荷报告 failure condition（有 plant 没被回收）。本轮确实提到了 root，" +
+                    "但内核里可能还留着 timer 节点，建议用完重启一次再跑。"
+            )
+            _state.update { it.copy(toast = "提权完成，但建议重启后再用（有 plant 未回收）") }
+        }
     }
 
     /**

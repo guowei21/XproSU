@@ -20,7 +20,7 @@ import java.util.UUID
  * 在 ADB 之上拼出 exploit 需要的四种 I/O：一次性命令、后台启动、长驻日志跟随、文件上传。
  *
  * libadb-android 只提供原始 "shell:" / "sync:" 流，没有 exit code、没有 sync 封装，
- * 这里逐个补上。与旧 IcService 的关键差异见 [tail]：日志不再按 1Hz 反复打开文件，
+ * 这里逐个补上。日志不再按 1Hz 反复打开文件，
  * 而是 exploit 启动前就打开一个 tail 流一直读，这在 timer-slab 释放窗口里很重要。
  *
  * 所有阻塞 I/O 都放在 Dispatchers.IO。

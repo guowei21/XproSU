@@ -1,5 +1,12 @@
 # 变更记录
 
+## 0.18.0
+- 修复「载荷还在重试就被判挂起」：只有 park_forever 的 `reboot before rerun` 才算终态，
+  `plant burst missed; holding zombie` 只是过程日志
+- `failure condition` 解析为「建议重启」的警告，不再和成功互斥
+- 清理增强：失败轮次也清临时文件，覆盖 `ic-done-a*`、统计残留进程、root 下补删 `ksud-h*`
+- APK 打包改为一律走 CI，删除本地打包入口
+
 ## 0.17.0-wifi
 - 提权通道改为应用内无线 ADB 客户端（配对 + TLS 直连本机 adbd），不再依赖 Shizuku
 - 移植 AdbShellTool / libadb（MIT）并附 THIRD_PARTY_NOTICES

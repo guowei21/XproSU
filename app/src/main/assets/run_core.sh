@@ -5,7 +5,7 @@
 # The core owns the whole plan: kmem trace oracle -> cred leak -> UAF plant
 # with read-back verification and retry -> zero write of uid+gid -> setuid(0)
 # -> exec of the proof shell.  This script only reports the identity the run
-# happened under and relays the core's log (IcService pumps stdout into the
+# happened under and relays the core's log (the app's ADB client streams stdout
 # app log and /sdcard/Download).
 #
 # The binary embeds one kernel profile.  It refuses to run when `uname -r`

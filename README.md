@@ -7,7 +7,7 @@ exploit core 与运行脚本保留上游实现，应用壳重写为 Kotlin + Jet
 
 | 项 | 值 |
 |---|---|
-| versionName / versionCode | 0.17.0-wifi / 19 |
+| versionName / versionCode | 0.18.0 / 20 |
 | 包名 | `com.xprosu`（debug：`com.xprosu.dev`） |
 | 应用名 | XproSu |
 | minSdk / targetSdk / compileSdk | 33 / 35 / 35 |
@@ -41,23 +41,22 @@ app/                        Android 壳
                             ui/{AppRoot,HomeScreen,LogScreen,Theme}.kt
 core/                       exploit 源码（MIT，molanp）
 scripts/build-core.sh       NDK 编 core → assets/ic-timer
-scripts/build-apk.sh        一条命令出 debug APK
+scripts/build-apk.sh        已废弃：APK 只走 CI，不再本地打包
 ```
 
 ## 构建
 
+APK 只在 CI 构建：推送 `cve-2026-98260` 或手动触发工作流，产物直接从 Release
+下载。本地不再执行 Gradle（`scripts/build-apk.sh` 会直接拒绝），避免在开发机上
+留下 Gradle/JDK 缓存。
+
 ```sh
-# 1) core（NDK r27+，目标 API 29；API 24 的 TLS 对齐会被 bionic 拒绝）
-#    默认 profile 是 qemu_iqoo12：X100 / PD2324J（V2324A）的 cred 以
-#    4 字节 usage 开头，uid 在 +0x4；pd2571 是 8 字节 usage，uid 在 +0x8。
-#    qemu_iqoo12 只是 profile 名，不要求跑 QEMU。
+# 只有改 core 时才需要本地编载荷（NDK r27+，目标 API 29；API 24 的 TLS 对齐会被
+# bionic 拒绝）。默认 profile 是 qemu_iqoo12：X100 / PD2324J（V2324A）的 cred 以
+# 4 字节 usage 开头，uid 在 +0x4；pd2571 是 8 字节 usage，uid 在 +0x8。
+# qemu_iqoo12 只是 profile 名，不要求跑 QEMU。
 export ANDROID_NDK_HOME=/opt/android-sdk/ndk/27.3.13750724
 ./scripts/build-core.sh
-
-# 2) APK
-./scripts/build-apk.sh                 # debug
-./gradlew assembleRelease \
-  -Pandroid.aapt2FromMavenOverride=/opt/android-sdk/build-tools/35.0.1/aapt2
 ```
 
 用错 profile 时 core 仍会继续跑（从 timer 调用点反推 slide），但编译期
