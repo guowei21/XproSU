@@ -19,9 +19,15 @@ boot.img/Image 推导目标机偏移。
 
 ## 构建
 
+API 29 是硬要求（API 24 的 TLS 段 8 字节对齐会被 bionic 拒绝）。默认
+profile 为 `qemu_iqoo12`（X100 / PD2324J 的 4 字节 cred usage 布局），
+见 `profiles.h`；也可直接用 `./build.sh`。
+
 ```sh
-CC=$ANDROID_NDK/toolchains/llvm/prebuilt/windows-x86_64/bin/aarch64-linux-android24-clang
-$CC -O2 -static -pthread -Wall -Wextra core/timer98260.c -o t98260
+CC=$ANDROID_NDK/toolchains/llvm/prebuilt/windows-x86_64/bin/aarch64-linux-android29-clang
+$CC -O2 -static -pthread -Wall -Wextra \
+    -DIC_PROFILE_QEMU_IQOO12 -DIC_SYMS_HAVE_ZLIB \
+    core/timer98260.c core/ic_syms.c -lz -o t98260
 ```
 
 ## 待做（refactor-98260 分支）

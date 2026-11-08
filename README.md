@@ -12,8 +12,8 @@ exploit core 与运行脚本保留上游实现，应用壳重写为 Kotlin + Jet
 | 应用名 | XproSu |
 | minSdk / targetSdk / compileSdk | 33 / 35 / 35 |
 | 构建 | Gradle 8.9 · AGP 8.7.3 · Kotlin 2.0.21 · Compose BOM 2024.10.01 |
-| 原生载荷 | `app/src/main/assets/ic-timer`，NDK r29 / API 29，2,383,880 B |
-| 载荷 SHA-256 | `21f0bc3b6a6e72ba…`（完整值见发布说明） |
+| 原生载荷 | `app/src/main/assets/ic-timer`，NDK r27+ / API 29，profile `qemu_iqoo12` |
+| 载荷校验 | 本机 NDK 27.3 产物 2,445,136 B，SHA-256 `99f9eb7f5441b2ceb80a9e69fb03eb2f1eaf4f94791d1a585f8ae6066fa14ade` |
 | 真机验证 | vivo V2324A / `PD2324C_A_16.2.13.1.W10`，表 `ic_pd2324j_links` |
 
 ## 功能
@@ -45,20 +45,42 @@ scripts/build-apk.sh        一条命令出 debug APK
 
 ```sh
 # 1) core（NDK r27+，目标 API 29；API 24 的 TLS 对齐会被 bionic 拒绝）
-export ANDROID_NDK_HOME=/opt/android-sdk/ndk/29.0.14206865
+#    默认 profile 是 qemu_iqoo12：X100 / PD2324J（V2324A）的 cred 以
+#    4 字节 usage 开头，uid 在 +0x4；pd2571 是 8 字节 usage，uid 在 +0x8。
+#    qemu_iqoo12 只是 profile 名，不要求跑 QEMU。
+export ANDROID_NDK_HOME=/opt/android-sdk/ndk/27.3.13750724
 ./scripts/build-core.sh
 
 # 2) APK
 ./scripts/build-apk.sh                 # debug
 ./gradlew assembleRelease \
-  -Pandroid.aapt2FromMavenOverride=/opt/android-sdk/build-tools/35.0.2/aapt2
+  -Pandroid.aapt2FromMavenOverride=/opt/android-sdk/build-tools/35.0.1/aapt2
 ```
+
+用错 profile 时 core 仍会继续跑（从 timer 调用点反推 slide），但编译期
+cred 偏移跟着错，日志会出现 `[site] ... differs from profile` 和反复
+`[!] fake uid write missed (uid=-126)`，最终 `plant1 burst missed`。
+APK 构建阶段也会检查载荷内嵌的 profile 名，发现 `pd2571` 直接报错。
 
 aarch64 主机必须用 `android.aapt2FromMavenOverride` 指向 arm64 的 aapt2；
 x86_64 主机装好 Google build-tools 后可省略。
 
 release 默认回退 debug 签名；要正式签名，把 `keystore.properties.example`
 复制成 `keystore.properties` 并填 keystore（已 gitignore）。
+
+## GitHub Actions
+
+推送 `cve-2026-98260` 或手动触发 `.github/workflows/build-release.yml` 会：
+
+1. 安装 JDK 17、Gradle 8.9、Android SDK 35 / build-tools 35.0.1 /
+   NDK 27.3.13750724；
+2. 用 `qemu_iqoo12` 编译 `ic-timer` 并校验内嵌 profile；
+3. 构建 release APK，成功后自动创建 Release（tag
+   `v<versionName>-<run_number>`），附 APK 与 SHA-256。
+
+正式签名在仓库 Secrets 配置 `SIGNING_KEY_BASE64`（keystore 的 base64）、
+`KEYSTORE_PASSWORD`、`KEY_ALIAS`、`KEY_PASSWORD`；未配置时回退 debug 签名，
+Release 说明会标注。`GITHUB_TOKEN` 需要 `contents: write`，工作流已声明。
 
 ## 运行前提
 
@@ -73,6 +95,9 @@ release 默认回退 debug 签名；要正式签名，把 `keystore.properties.e
 - `core/` 与 4 个运行脚本来自上游，脚本未改逻辑
 - `core/timer98260.c` 唯一改动：KSU 收尾启动管理器时读 `IC_KSU_PKG`，
   有值用 `monkey -p <pkg>`，无值保持原来的 `am start -n <KSU_PKG>/.ui.MainActivity`
+- 构建默认 profile 改为 `qemu_iqoo12`（`core/build.sh` 与 `scripts/build-core.sh`）；
+  上游 X100 系列的预编译载荷同样使用该 profile，`pd2571` 仅用于 8 字节
+  cred usage 的机型
 - 其余全部是应用壳、构建工程与文档
 
 ## 已知限制

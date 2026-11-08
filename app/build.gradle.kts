@@ -17,7 +17,7 @@ val hasReleaseKey = keystoreProps.getProperty("storeFile") != null
 android {
     namespace = "com.xprosu"
     compileSdk = 35
-    buildToolsVersion = "35.0.2"
+    buildToolsVersion = "35.0.1"
 
     defaultConfig {
         applicationId = "com.xprosu"
@@ -94,6 +94,14 @@ tasks.matching { it.name == "preBuild" }.configureEach {
         if (!payload.exists()) {
             throw GradleException(
                 "assets/ic-timer 缺失：先运行 scripts/build-core.sh 生成（需要 Android NDK r27+，API 29 target）。"
+            )
+        }
+        // V2324A 的 cred 以 4 字节 usage 开头；pd2571 载荷会把 uid 写到
+        // cred+8，表现为 fake uid write missed，构建阶段直接拦下。
+        if (payload.readBytes().toString(Charsets.ISO_8859_1).contains("pd2571-6.1.145")) {
+            throw GradleException(
+                "assets/ic-timer 是 pd2571 profile（8 字节 cred usage）；" +
+                    "V2324A 需要 qemu_iqoo12，重新运行 scripts/build-core.sh"
             )
         }
     }

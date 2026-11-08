@@ -5,7 +5,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 GRADLE=${GRADLE:-/opt/gradle/gradle-8.9/bin/gradle}
 SDK=${ANDROID_HOME:-/opt/android-sdk}
-AAPT2=${AAPT2:-$SDK/build-tools/35.0.2/aapt2}
+AAPT2=${AAPT2:-$SDK/build-tools/35.0.1/aapt2}
 
 [ -x "$GRADLE" ] || { echo "找不到 Gradle：$GRADLE（可用 GRADLE=... 覆盖）" >&2; exit 1; }
 [ -x "$AAPT2" ] || { echo "找不到 aapt2：$AAPT2（可用 AAPT2=... 覆盖）" >&2; exit 1; }

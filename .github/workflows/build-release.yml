@@ -1,0 +1,161 @@
+name: Build and Release APK
+
+on:
+  push:
+    branches:
+      - cve-2026-98260
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  NDK_VERSION: "27.3.13750724"
+
+jobs:
+  build-release:
+    name: Build APK and publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Install Android SDK packages
+        run: |
+          set -euo pipefail
+          command -v sdkmanager
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager --install \
+            "platforms;android-35" \
+            "build-tools;35.0.1" \
+            "ndk;${NDK_VERSION}"
+
+      - name: Build native payload
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
+          sh scripts/build-core.sh
+          test -s app/src/main/assets/ic-timer
+          strings app/src/main/assets/ic-timer > "$RUNNER_TEMP/payload.strings"
+          if grep -q 'pd2571-6.1.145' "$RUNNER_TEMP/payload.strings"; then
+            echo "::error::native payload uses pd2571 profile; V2324A needs qemu_iqoo12"
+            exit 1
+          fi
+          grep -q 'qemu-iqoo12-6.1.145' "$RUNNER_TEMP/payload.strings"
+          sha256sum app/src/main/assets/ic-timer
+
+      - name: Configure release signing
+        id: signing
+        env:
+          SIGNING_KEY_BASE64: ${{ secrets.SIGNING_KEY_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SIGNING_KEY_BASE64:-}" ]; then
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::未配置 SIGNING_KEY_BASE64，release APK 将回退 debug 签名，不适合正式分发。"
+            exit 0
+          fi
+          if [ -z "${KEYSTORE_PASSWORD:-}" ] || [ -z "${KEY_ALIAS:-}" ] || [ -z "${KEY_PASSWORD:-}" ]; then
+            echo "::error::已配置 SIGNING_KEY_BASE64，但 KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD 不完整。"
+            exit 1
+          fi
+          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/release.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > keystore.properties
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build release APK
+        run: |
+          set -euo pipefail
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          gradle :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Package release artifacts
+        id: package
+        run: |
+          set -euo pipefail
+          VERSION_NAME=$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts | head -n1)
+          VERSION_CODE=$(sed -n 's/^[[:space:]]*versionCode = \([0-9][0-9]*\)/\1/p' app/build.gradle.kts | head -n1)
+          test -n "$VERSION_NAME"
+          test -n "$VERSION_CODE"
+          APK=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -print -quit)
+          test -n "$APK"
+          APK_NAME="XproSU-${VERSION_NAME}-${VERSION_CODE}-${GITHUB_RUN_NUMBER}-release.apk"
+          mkdir -p dist
+          cp "$APK" "dist/$APK_NAME"
+          (cd dist && sha256sum "$APK_NAME" > "$APK_NAME.sha256")
+          TAG="v${VERSION_NAME}-${GITHUB_RUN_NUMBER}"
+          {
+            echo "APK_NAME=$APK_NAME"
+            echo "TAG=$TAG"
+            echo "SIGNED=${{ steps.signing.outputs.signed }}"
+          } >> "$GITHUB_ENV"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "--- artifact ---"
+          ls -l dist
+          cat "dist/$APK_NAME.sha256"
+
+      - name: Verify APK signature
+        run: |
+          set -euo pipefail
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n1)
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --print-certs "dist/$APK_NAME"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: XproSU-${{ steps.package.outputs.version_name }}-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            dist/*.apk
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.package.outputs.tag }}
+          name: XproSU ${{ steps.package.outputs.version_name }} build ${{ github.run_number }}
+          body: |
+            ## XproSU ${{ steps.package.outputs.version_name }} (${{ steps.package.outputs.version_code }})
+
+            - 分支：`${{ github.ref_name }}`
+            - 提交：`${{ github.sha }}`
+            - 原生载荷：`qemu_iqoo12`（API 29）
+            - 签名：${{ steps.signing.outputs.signed == 'true' && 'release keystore' || 'debug key（未配置签名 secrets）' }}
+
+            APK 的 SHA-256 见同目录 `.sha256` 文件。
+          files: |
+            dist/${{ steps.package.outputs.apk_name }}
+            dist/${{ steps.package.outputs.apk_name }}.sha256
+          fail_on_unmatched_files: true
+          make_latest: true
+          draft: false
+          prerelease: false
