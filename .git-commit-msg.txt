@@ -1,6 +1,0 @@
-feat: 提权通道改为应用内无线 ADB（去掉 Shizuku 依赖）
-
-- 移植 AdbShellTool/libadb（MIT），应用内完成配对与 TLS 直连本机 adbd
-- 删除 Shizuku 用户服务 IIcService/IcService 与权限声明
-- 运行流实时回显载荷输出，收尾按 [core] exit 判定，避免秒失败误报
-- 版本 0.17.0-wifi / 19
