@@ -11,3 +11,5 @@ captures/
 app/src/main/assets/ic-timer
 .kotlin/
 keystore.properties
+# 本地逆向分析资料（APK/BTF/上游源码），不进版本库
+.analysis/

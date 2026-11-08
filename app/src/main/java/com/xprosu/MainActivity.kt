@@ -1,6 +1,9 @@
 package com.xprosu
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
@@ -34,6 +37,19 @@ class MainActivity : ComponentActivity() {
                     vm.consumeToast()
                 }
 
+                // 前台服务要发通知，Android 13+ 必须先拿到通知权限
+                val notifPerm = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission(),
+                ) { }
+                LaunchedEffect(Unit) {
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+
                 val picker = rememberLauncherForActivityResult(
                     ActivityResultContracts.OpenDocument(),
                 ) { uri ->
@@ -52,6 +68,9 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     snackbar = snackbar,
                     onConnect = vm::connect,
+                    onPair = vm::startPairing,
+                    onSubmitCode = vm::submitPairingCode,
+                    onOpenWireless = vm::openWirelessDebugging,
                     onRun = vm::run,
                     onDiag = vm::diag,
                     onParse = { picker.launch(arrayOf("*/*")) },

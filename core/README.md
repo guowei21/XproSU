@@ -36,5 +36,5 @@ $CC -O2 -static -pthread -Wall -Wextra \
    由 `uname -r` 选择（格式参考 dada-cve 的 kernel_profiles，但内容按
    本仓库自有数据重写）；
 2. 并入本仓库已有的 vivo 6.1 机型偏移表与 KSU 交接脚本；
-3. 把 APK 侧（Shizuku 投放/运行）切到新 core；
+3. 把 APK 侧（应用内无线 ADB 投放/运行）切到新 core；
 4. 5.10 支持作为第二优先级：沿用本仓库已测出的 5.10 偏移与忙轮询 killer。

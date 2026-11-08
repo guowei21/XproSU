@@ -68,7 +68,7 @@ fun LogSheet(
         ) {
             Text("日志", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = onDiag, enabled = state.serviceReady) { Text("诊断") }
+            TextButton(onClick = onDiag, enabled = state.connected) { Text("诊断") }
             TextButton(onClick = onClear) { Text("清空") }
             TextButton(onClick = { clipboard.setText(AnnotatedString(state.log)) }) { Text("复制") }
         }

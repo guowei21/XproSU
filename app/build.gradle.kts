@@ -23,13 +23,12 @@ android {
         applicationId = "com.xprosu"
         minSdk = 33
         targetSdk = 35
-        versionCode = 18
-        versionName = "0.16.2-base"
+        versionCode = 19
+        versionName = "0.17.0-wifi"
     }
 
     buildFeatures {
         compose = true
-        aidl = true
         buildConfig = true
     }
 
@@ -118,8 +117,13 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
+    // 无线 ADB：libadb-android 负责 adbd 协议与 TLS，sun-security-android 提供
+    // 造自签证书用的 android.sun.security.x509.*，hiddenapibypass 放开隐藏 API 限制，
+    // conscrypt 提供 TLSv1.3 Provider（库里的反射首选路径）。
+    implementation("com.github.MuntashirAkon:libadb-android:3.1.1")
+    implementation("com.github.MuntashirAkon:sun-security-android:1.1")
+    implementation("org.lsposed.hiddenapibypass:hiddenapibypass:6.1")
+    implementation("org.conscrypt:conscrypt-android:2.5.2")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

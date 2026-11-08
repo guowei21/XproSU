@@ -1,5 +1,12 @@
 # 变更记录
 
+## 0.17.0-wifi
+- 提权通道改为应用内无线 ADB 客户端（配对 + TLS 直连本机 adbd），不再依赖 Shizuku
+- 移植 AdbShellTool / libadb（MIT）并附 THIRD_PARTY_NOTICES
+- 新增运行流：载荷输出实时回显，结束按 [core] exit 判定
+- 修复「秒失败后仍继续跑」：运行流要等到 EOF 才收尾
+- 清理策略调整：保留最近 3 份运行日志
+
 ## 0.16.2
 - 删除首页标题区（XPROSU / 副标题 / CVE 行）及刷新按钮
 

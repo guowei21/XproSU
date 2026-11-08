@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,9 +25,11 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -38,6 +41,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,12 +52,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xprosu.AppState
 import com.xprosu.KSU_NAMES
-import com.xprosu.ShizukuState
+import com.xprosu.adb.AdbSessionBus
 import com.xprosu.core.StagePhase
 import com.xprosu.core.StageStatus
 
@@ -61,6 +66,9 @@ import com.xprosu.core.StageStatus
 fun HomeScreen(
     state: AppState,
     onConnect: () -> Unit,
+    onPair: () -> Unit,
+    onSubmitCode: (String) -> Unit,
+    onOpenWireless: () -> Unit,
     onRun: () -> Unit,
     onLog: () -> Unit,
     onParse: () -> Unit,
@@ -71,12 +79,39 @@ fun HomeScreen(
     val done = state.stages.count { it.phase == StagePhase.DONE }
     val current = state.stages.firstOrNull { it.phase == StagePhase.RUNNING }
 
+    var codeDialog by rememberSaveable { mutableStateOf(false) }
+    // 配对码默认在通知栏里填（配对对话框还在设置页，切走就会丢），
+    // 这个弹窗只给通知栏不好用时兜底。
+    LaunchedEffect(state.link.phase) {
+        if (state.link.phase == AdbSessionBus.Phase.CONNECTED) codeDialog = false
+    }
+    if (codeDialog) {
+        PairingCodeDialog(
+            port = state.link.port,
+            onDismiss = { codeDialog = false },
+            onConfirm = { code ->
+                codeDialog = false
+                onSubmitCode(code)
+            },
+        )
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 32.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        item { HeroCard(state, current?.title, onConnect, onRun) }
+        item {
+            HeroCard(
+                state = state,
+                currentStage = current?.title,
+                onConnect = onConnect,
+                onPair = onPair,
+                onOpenWireless = onOpenWireless,
+                onManualCode = { codeDialog = true },
+                onRun = onRun,
+            )
+        }
         item { ProgressCard(state.stages, done, current?.title) }
         item { ToolsRow(state, onLog, onParse) }
         item { SettingsCard(state, onKsu, onSafeMode) }
@@ -89,28 +124,40 @@ private fun HeroCard(
     state: AppState,
     currentStage: String?,
     onConnect: () -> Unit,
+    onPair: () -> Unit,
+    onOpenWireless: () -> Unit,
+    onManualCode: () -> Unit,
     onRun: () -> Unit,
 ) {
+    val phase = state.link.phase
     val status = when {
         state.running -> "运行中"
-        state.serviceReady -> "已就绪"
-        state.shizuku == ShizukuState.NO_PERMISSION -> "等待授权"
-        state.shizuku == ShizukuState.NOT_RUNNING -> "Shizuku 未运行"
+        state.connected -> "已就绪"
+        phase == AdbSessionBus.Phase.CODE_REQUIRED -> "等待配对码"
+        phase == AdbSessionBus.Phase.NEEDS_PAIRING -> "需要配对"
+        phase == AdbSessionBus.Phase.ERROR -> "连接失败"
+        phase == AdbSessionBus.Phase.CONNECTED -> "已连接"
+        phase == AdbSessionBus.Phase.CONNECTING -> "正在连接"
+        phase != AdbSessionBus.Phase.IDLE -> "正在配对"
         else -> "未连接"
     }
     val tint = when {
         state.running -> MaterialTheme.colorScheme.tertiary
-        state.serviceReady -> MaterialTheme.colorScheme.primary
-        state.shizuku == ShizukuState.NOT_RUNNING || state.shizuku == ShizukuState.NO_PERMISSION ->
-            MaterialTheme.colorScheme.error
+        state.connected -> MaterialTheme.colorScheme.primary
+        phase == AdbSessionBus.Phase.ERROR -> MaterialTheme.colorScheme.error
         else -> MaterialTheme.colorScheme.outline
     }
     val hint = when {
         state.running -> currentStage?.let { "正在执行：$it" } ?: "正在执行"
-        state.serviceReady -> state.identity.lineSequence().firstOrNull().orEmpty()
-        state.shizuku == ShizukuState.NOT_RUNNING -> "用无线调试 / ADB 启动 Shizuku 后回来连接"
-        state.shizuku == ShizukuState.NO_PERMISSION -> "在 Shizuku 弹窗里允许本应用"
-        else -> "点击连接 Shizuku 绑定 shell 用户服务"
+        state.connected -> state.identity.lineSequence().firstOrNull().orEmpty()
+        phase == AdbSessionBus.Phase.CONNECTED ->
+            "ADB 已连上，但 shell 通道没响应：点「重试连接」"
+        phase == AdbSessionBus.Phase.NEEDS_PAIRING ->
+            "去设置 › 无线调试 › 使用配对码配对设备，然后下拉通知栏输入 6 位码"
+        phase == AdbSessionBus.Phase.CODE_REQUIRED ->
+            "下拉通知栏，点「输入配对码」填入设置里显示的 6 位数字"
+        phase != AdbSessionBus.Phase.IDLE -> state.link.message ?: "配对进行中"
+        else -> "走本机无线调试直连 adbd，不再需要 Shizuku"
     }
 
     Surface(
@@ -142,7 +189,7 @@ private fun HeroCard(
             Spacer(Modifier.height(18.dp))
             Button(
                 onClick = onRun,
-                enabled = state.serviceReady && !state.running,
+                enabled = state.connected && !state.running,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -168,16 +215,32 @@ private fun HeroCard(
             Text(
                 hint,
                 style = MaterialTheme.typography.labelSmall,
-                fontFamily = if (state.serviceReady) FontFamily.Monospace else FontFamily.Default,
+                fontFamily = if (state.connected) FontFamily.Monospace else FontFamily.Default,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (!state.serviceReady) {
+            if (!state.connected) {
                 TextButton(
                     onClick = onConnect,
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                ) { Text("连接 Shizuku") }
+                ) {
+                    Text(if (phase == AdbSessionBus.Phase.IDLE) "连接（无线 ADB）" else "重试连接")
+                }
+                TextButton(
+                    onClick = onPair,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("用配对码重新配对") }
+                if (phase == AdbSessionBus.Phase.CODE_REQUIRED) {
+                    TextButton(
+                        onClick = onManualCode,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("在本页输入配对码（备用）") }
+                }
+                TextButton(
+                    onClick = onOpenWireless,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("打开无线调试设置") }
             }
         }
     }
@@ -301,7 +364,7 @@ private fun ToolsRow(
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         ToolCard("日志", Icons.Filled.List, true, onLog, Modifier.weight(1f))
-        ToolCard("解析偏移", Icons.Filled.Search, state.serviceReady, onParse, Modifier.weight(1f))
+        ToolCard("解析偏移", Icons.Filled.Search, state.connected, onParse, Modifier.weight(1f))
     }
 }
 
@@ -411,4 +474,52 @@ private fun ManualFooter(onManual: () -> Unit) {
     ) {
         Text("使用手册与支持机型", style = MaterialTheme.typography.labelLarge)
     }
+}
+
+/** 配对码输入框：无线调试那边给的是 6 位数字，填完直接去配对。 */
+@Composable
+private fun PairingCodeDialog(
+    port: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var code by rememberSaveable { mutableStateOf("") }
+    val ready = code.length == 6
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("输入配对码") },
+        text = {
+            Column {
+                Text(
+                    "在系统“无线调试”里点“使用配对码配对设备”，把弹出的 6 位码填到这里。",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (port > 0) {
+                    Text(
+                        "配对端口 $port",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { raw ->
+                        code = raw.filter { it.isDigit() }.take(6)
+                    },
+                    singleLine = true,
+                    label = { Text("6 位配对码") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(code) }, enabled = ready) { Text("配对") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }

@@ -7,7 +7,7 @@ exploit core 与运行脚本保留上游实现，应用壳重写为 Kotlin + Jet
 
 | 项 | 值 |
 |---|---|
-| versionName / versionCode | 0.16.2 / 18 |
+| versionName / versionCode | 0.17.0-wifi / 19 |
 | 包名 | `com.xprosu`（debug：`com.xprosu.dev`） |
 | 应用名 | XproSu |
 | minSdk / targetSdk / compileSdk | 33 / 35 / 35 |
@@ -18,7 +18,9 @@ exploit core 与运行脚本保留上游实现，应用壳重写为 Kotlin + Jet
 
 ## 功能
 
-- Shizuku shell 用户服务（uid 2000 / `u:r:shell:s0`），应用不直接碰 `/data/local/tmp`
+- 无线调试直连：应用内自带 ADB 客户端（TLS 配对 + 密钥），连上本机 adbd 后以
+  shell 身份（uid 2000 / `u:r:shell:s0`）执行，应用不直接碰 `/data/local/tmp`
+- 不再依赖 Shizuku；配对码在应用内输入，重启后已授信的密钥可直接重连
 - 12 阶段进度：按 core 日志锚点解析，不需要改 native
 - KSU 管理器自动检测：已知包名优先，未命中按关键字扫描并用 `resolve-activity` 验证
 - 交接时通过 `IC_KSU_PKG` 把管理器包名传给 core，用 `monkey` 冷启动（兼容随机 Activity 别名）
@@ -30,10 +32,11 @@ exploit core 与运行脚本保留上游实现，应用壳重写为 Kotlin + Jet
 
 ```
 app/                        Android 壳
-  src/main/aidl/com/xprosu/ IIcService.aidl（8 个方法，签名与上游一致）
   src/main/assets/          run_core.sh / ksu_handoff.sh / safemode.sh
                             cleanup_tmp.sh / manual.md / ic-timer
-  src/main/java/com/xprosu/ MainActivity.kt / MainViewModel.kt / IcService.java
+  src/main/java/com/xprosu/ MainActivity.kt / MainViewModel.kt / XprosuApp.java
+                            adb/{AdbBridge,AdbPairingService,XprosuAdbKeyManager}
+                            adb/{AdbSessionBus,AdbTransport}.kt
                             core/Stages.kt（12 阶段锚点）
                             ui/{AppRoot,HomeScreen,LogScreen,Theme}.kt
 core/                       exploit 源码（MIT，molanp）
@@ -85,7 +88,8 @@ Release 说明会标注。`GITHUB_TOKEN` 需要 `contents: write`，工作流已
 ## 运行前提
 
 - 每次完整运行前重启手机（上一轮的 slab 状态会污染 fake-cred 命中率）
-- Shizuku 用无线调试 / ADB 启动，不要用 root 启动
+- 打开开发者选项里的「无线调试」，首次用配对码配一次；配对后续用同一密钥
+  自动重连，不需要 root
 - 接管 KSU 前先装好对应管理器 APK，模块由 late-load 加载
 - 只支持 KernelSU 系（KernelSU / KSU-Next / SukiSU / BakaSU / ReSukiSU /
   SakiSU / FinaSU / 7kimisu / vivoKSU）；Magisk、APatch 不走这条链路
@@ -93,6 +97,9 @@ Release 说明会标注。`GITHUB_TOKEN` 需要 `contents: write`，工作流已
 ## 与上游的差异
 
 - `core/` 与 4 个运行脚本来自上游，脚本未改逻辑
+- Android 壳的提权通道由 Shizuku 用户服务改为应用内无线 ADB 客户端；配对服务
+  移植自 AdbShellTool（MIT），协议层用 libadb-android（Apache-2.0），见
+  `THIRD_PARTY_NOTICES.md`
 - `core/timer98260.c` 唯一改动：KSU 收尾启动管理器时读 `IC_KSU_PKG`，
   有值用 `monkey -p <pkg>`，无值保持原来的 `am start -n <KSU_PKG>/.ui.MainActivity`
 - 构建默认 profile 改为 `qemu_iqoo12`（`core/build.sh` 与 `scripts/build-core.sh`）；

@@ -1,8 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Shizuku 授权；用户服务跑在 shell 身份（uid 2000 / u:r:shell:s0） -->
-    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+    <!-- 无线 ADB：本机 loopback 连 adbd，配对后跑在 shell 身份（uid 2000 / u:r:shell:s0） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- 日志副本写 /sdcard/Download；API <= 32 用存储组，30+ 用 all-files -->
     <uses-permission
@@ -14,6 +22,7 @@
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <application
+        android:name=".XprosuApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
@@ -21,17 +30,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.IcTimerLpe">
 
-        <meta-data
-            android:name="moe.shizuku.client.V3_SUPPORT"
-            android:value="true" />
-
-        <provider
-            android:name="rikka.shizuku.ShizukuProvider"
-            android:authorities="${applicationId}.shizuku"
-            android:enabled="true"
-            android:exported="true"
-            android:multiprocess="false"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+        <!-- 配对必须在前台服务里做：系统只允许前台应用解析 mDNS，且配对期间
+             用户会离开本应用去设置页 -->
+        <service
+            android:name=".adb.AdbPairingService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <activity
             android:name=".MainActivity"

@@ -7,10 +7,15 @@ TMP=/data/local/tmp
 cd "$TMP" 2>/dev/null || exit 0
 
 n=0
-for f in ic-timer-a* ic-lpe-a*.sh ic-app-a*.log ic-syms-a* ksud-h* \
+for f in ic-timer-a* ic-lpe-a*.sh ic-syms-a* ksud-h* \
          ic-boot-a*.img ic-clean-a*.sh ic-safe-h*.sh ksu-h*.sh; do
     [ -e "$f" ] || continue
     rm -rf "$f" 2>/dev/null && n=$((n + 1))
+done
+
+# 运行日志保留最近 3 份：它是排错证据，不能跟着清理一起没。
+ls -t ic-app-a*.log 2>/dev/null | tail -n +4 | while IFS= read -r f; do
+    rm -f "$f" 2>/dev/null
 done
 
 if [ -d ic-dropdir ]; then
