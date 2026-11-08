@@ -13,7 +13,7 @@ exploit core 与运行脚本保留上游实现，应用壳重写为 Kotlin + Jet
 | minSdk / targetSdk / compileSdk | 33 / 35 / 35 |
 | 构建 | Gradle 8.9 · AGP 8.7.3 · Kotlin 2.0.21 · Compose BOM 2024.10.01 |
 | 原生载荷 | `app/src/main/assets/ic-timer`，NDK r27+ / API 29，profile `qemu_iqoo12` |
-| 载荷校验 | 本机 NDK 27.3 产物 2,445,136 B，SHA-256 `99f9eb7f5441b2ceb80a9e69fb03eb2f1eaf4f94791d1a585f8ae6066fa14ade` |
+| 载荷校验 | CI 产物 2,444,976 B，SHA-256 `c4428ac8a868d8d11fd3a0ec96d2ca5910fbe742556c17fcd628312ed322f056`（APK 资产的 `.sha256` 为准） |
 | 真机验证 | vivo V2324A / `PD2324C_A_16.2.13.1.W10`，表 `ic_pd2324j_links` |
 
 ## 功能
