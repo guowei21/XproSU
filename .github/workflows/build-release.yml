@@ -31,10 +31,8 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Gradle 8.9
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
+      # 不用 gradle/actions/setup-gradle：它固定从 services.gradle.org 取分发包，
+      # 该地址会间歇性返回 504。这里直接走仓库内的 wrapper（腾讯镜像）。
 
       - name: Install Android SDK packages
         run: |
@@ -101,7 +99,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "sdk.dir=$ANDROID_HOME" > local.properties
-          gradle :app:assembleRelease --no-daemon --stacktrace
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
 
       - name: Package release artifacts
         id: package
